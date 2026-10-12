@@ -14,7 +14,6 @@ endif()
 set(DATAPROVIDER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../DataProvider" CACHE PATH "Company DataProvider source directory")
 set(BEACHEYE_DIR "" CACHE PATH "Authenticated private BeachEye source directory")
 set(BEACHEYE_REVISION "50" CACHE STRING "BeachEye firmware revision selected by the PowerShell build")
-option(WOLFEYE_LEGACY_WINDOWS "Target the Windows 7/8 compatibility baseline" OFF)
 if(NOT BEACHEYE_DIR)
     message(FATAL_ERROR "BEACHEYE_DIR must point to the authenticated private dependency checkout.")
 endif()
@@ -66,16 +65,13 @@ if(BEACHEYE_EVENT_HEADER MATCHES "Deserialize\\(ser4cpp::rseq_t&")
     target_compile_definitions(wolfeye_beacheye PRIVATE BE_EVENT_RSEQ_API=1)
 endif()
 target_link_libraries(wolfeye_beacheye PRIVATE ws2_32)
-# The legacy GCC cJSON port redirects allocation through firmware-only names.
+# Map firmware-only cJSON allocator names to desktop CRT functions.
 target_compile_definitions(wolfeye_beacheye PRIVATE
     REVISION=${BEACHEYE_REVISION}
     cjosn_helper_malloc=malloc
     cjosn_helper_free=free
     cjson_helper_realloc=realloc
 )
-if(WOLFEYE_LEGACY_WINDOWS)
-    target_compile_definitions(wolfeye_beacheye PRIVATE WINVER=0x0601 _WIN32_WINNT=0x0601)
-endif()
 set_target_properties(wolfeye_beacheye PROPERTIES PREFIX "" MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 if(MINGW)
     target_link_options(wolfeye_beacheye PRIVATE -static -static-libgcc -static-libstdc++)
