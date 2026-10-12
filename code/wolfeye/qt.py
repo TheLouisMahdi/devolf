@@ -32,7 +32,7 @@ def configure_high_dpi() -> None:
 
 
 def event_position(event):
-    """Return a floating-point local event position on Qt 5 and Qt 6."""
+    """Return a floating-point local event position."""
     position = getattr(event, "position", None)
     if position is not None:
         return position()
