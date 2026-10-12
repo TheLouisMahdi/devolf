@@ -1,54 +1,52 @@
 # Public release checklist
 
-Do not change this repository to public visibility until every blocking item
-below has been resolved. Removing a file in the latest commit does not remove it
-from Git history.
+## Publication policy
 
-## Completed for the current tree
+The DEVolf repository is intended to be public. All files in its clean tracked
+tree are approved for public read access. BeachEye is the only private component:
+its source, history, source patches, caches, and generated DLLs must never be
+committed or attached to a public DEVolf release.
 
-- The tracked BeachEye source mirror has been removed.
-- Generated BeachEye DLLs have been removed and are ignored by Git.
-- Source patches containing excerpts from the private dependency have been
-  replaced by a narrow cache-only compatibility transformation.
-- The resolver requires GitHub CLI authentication, verifies that the dependency
-  repository is private, pins full commit SHAs, and stores the checkout outside
-  the public repository.
-- The repository-local private source cache and the personal VS Code path have
-  been removed.
-- A pattern-based scan of the current tracked text files found no private keys,
-  GitHub tokens, AWS access keys, or obvious embedded credentials. This is not a
-  substitute for a dedicated secret scanner.
+Public DEVolf users may clone and inspect the application. Building the native
+application requires a GitHub account with read access to the original private
+BeachEye repository. The PowerShell build uses GitHub CLI to download the pinned
+private commit directly at build time.
 
-## Blocking before publication
+## Completed
 
-1. **Create a clean public history or rewrite the existing history.** Earlier
-   commits contain BeachEye headers, implementation files, source snapshots,
-   patches, and compiled DLLs under several paths, including
-   `code/native/COMPATIBLE`, `code/native/beacheye`, `code/native/original`, and
-   the older nested `wolfeye` tree. A normal deletion commit does not protect
-   those objects after the repository becomes public.
-2. **Choose a repository license.** No top-level `LICENSE` file currently
-   grants redistribution rights. Confirm ownership and the intended public
-   license before adding one.
-3. **Confirm redistribution permission for non-BeachEye company material.** In
-   particular, review `code/native/DataProvider`, the FC22 inspection PDF
-   templates, company/product logos and icons, fault-scenario files, protocol
-   constants, and company-derived TCC behavior.
-4. **Review contributor privacy.** Existing history exposes contributor names
-   and email addresses. Decide whether the clean public history should preserve
-   or replace that metadata.
-5. **Scan the final rewritten history.** Run a dedicated scanner such as
-   Gitleaks against all branches and tags after the history cleanup, then inspect
-   large and binary Git objects manually.
-6. **Review GitHub metadata and settings.** Check repository description,
-   topics, branch protection, Actions secrets, deploy keys, webhooks, releases,
-   issue attachments, and every branch/tag before changing visibility.
+- `TheLouisMahdi/devolf` was created with a new single-root history containing
+  only the audited DEVolf snapshot.
+- The tracked BeachEye mirror, compiled DLL, private source excerpts, in-tree
+  cache, and older contaminated Git history were not transferred.
+- The root commit uses the GitHub `noreply` identity rather than a personal email.
+- `resolve-beacheye-source.ps1` requires GitHub CLI authentication and confirms
+  that the configured dependency repository is private.
+- Revision-50 and revision-51 dependencies are pinned by full commit SHA.
+- Private source is cloned outside the public repository under
+  `%LOCALAPPDATA%\DEVolf\BeachEye` by default.
+- The build fails closed when the user lacks access, the repository is public,
+  a commit cannot be verified, or the expected source layout is incomplete.
+- Generated native DLLs, executables, build directories, sessions, and caches
+  are ignored by Git.
+- The current tracked tree passed pattern-based checks for private keys, GitHub
+  tokens, AWS access keys, private BeachEye source paths, and native binaries.
 
-## Recommended publication path
+## Before changing visibility
 
-The lowest-risk option is a new public repository created from the audited
-current snapshot, with a reviewed license and only approved assets. If the
-existing repository URL must be retained, use a coordinated history rewrite,
-force-push every retained branch and tag, remove stale refs/releases, and have
-all collaborators reclone. Keep the repository private until that operation is
-complete and independently verified.
+1. Confirm that the default branch is `release` and contains only one root
+   commit.
+2. Confirm that the repository has no other branches, tags, releases, packages,
+   Actions artifacts, issue attachments, deploy keys, webhooks, or secrets that
+   could expose BeachEye.
+3. Run a final secret scan against every reachable object in the new repository.
+4. Verify that an unauthorized GitHub account can clone DEVolf but receives a
+   clear access failure when the resolver requests BeachEye.
+5. Verify that an authorized account can run the documented build and receives
+   the exact pinned BeachEye revisions through GitHub CLI.
+6. Choose a public license if reuse and redistribution should be granted. Without
+   a `LICENSE` file, publishing the source provides read access but does not grant
+   an open-source license.
+
+The original `wolfeye-v2` repository must remain private because its historical
+objects contain earlier BeachEye source and DLLs. Only the clean `devolf`
+repository is a candidate for public visibility.

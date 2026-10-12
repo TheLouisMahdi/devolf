@@ -85,10 +85,16 @@ password, private source archive, or generated native DLL in this repository.
 
 ## Publication status
 
-The current tree no longer tracks BeachEye source or generated BeachEye DLLs,
-but older Git commits still contain private material. The repository must remain
-private until the history and remaining company-owned assets have completed the
-steps in [PUBLIC_RELEASE_CHECKLIST.md](PUBLIC_RELEASE_CHECKLIST.md).
+DEVolf is intended to be published from the clean `TheLouisMahdi/devolf`
+repository. All files tracked there are part of the public DEVolf source tree;
+BeachEye is the only restricted dependency. Its source remains in the original
+private repository and is downloaded directly by GitHub CLI during the
+PowerShell build only for authenticated users who already have access.
+
+Users without BeachEye access can clone and inspect DEVolf, but the native build
+fails with an explicit access error and does not receive private source or DLLs.
+See [PUBLIC_RELEASE_CHECKLIST.md](PUBLIC_RELEASE_CHECKLIST.md) for the final
+visibility checks.
 
 ## Features
 
