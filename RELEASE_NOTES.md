@@ -53,8 +53,12 @@ repository's nested legacy layouts and keeps one canonical application source.
 
 ## Verification
 
-Run `build.ps1` with Python 3.11 x64, CMake, a supported 64-bit C/C++
-compiler, and authenticated access to the private BeachEye repository. The
+Run `build.ps1` with Python 3.11 x64, CMake, MSYS2 UCRT64 GCC/Ninja,
+and authenticated access to the private BeachEye repository. The
 build executes the tests and performs a packaged EXE startup smoke test.
 The old Windows x86/Windows 7 build and its toolchain parameters were removed.
 The device-level protocol fallback and deployed settings compatibility remain.
+
+The native build now uses GCC/Ninja explicitly because the pinned BeachEye
+headers do not compile under MSVC. The GCC cache is separate from the previous
+Visual Studio build directory.
