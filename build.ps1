@@ -85,7 +85,7 @@ foreach ($requiredFile in @($entryPoint, $icon, $requirements, $nativeBuildScrip
 }
 
 if (-not (Test-Path -LiteralPath $python -PathType Leaf) -and [string]::IsNullOrWhiteSpace($PythonExecutable)) {
-    $launcherVersion = if ($pythonBitsRequired -eq 32) { "-$pythonVersionRequired-32" } else { "-$pythonVersionRequired" }
+    $launcherVersion = "-$pythonVersionRequired"
     py $launcherVersion -m venv (Join-Path $projectRoot $venvName)
     if ($LASTEXITCODE -ne 0) {
         throw "Python $pythonVersionRequired could not create the virtual environment."
@@ -228,7 +228,7 @@ finally {
 if (-not (Test-Path -LiteralPath $output -PathType Leaf)) {
     throw "Build finished without producing $output"
 }
-$expectedMachine = if ($architecture -eq "x86") { 0x014C } else { 0x8664 }
+$expectedMachine = 0x8664
 $actualMachine = Get-PeMachine $output
 if ($actualMachine -ne $expectedMachine) {
     throw "Packaged EXE architecture mismatch: expected $architecture, PE machine 0x$($actualMachine.ToString('X4'))."
