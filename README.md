@@ -3,9 +3,7 @@
 ## Build
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 `
-  -UniversalToolchainRoot "C:\Toolchains\mingw32" `
-  -PythonExecutable "C:\Python38-32\python.exe"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
 Output: `Dist\DEVolf.exe`
@@ -35,8 +33,10 @@ repository name and the immutable revision-50 and revision-51 commit IDs.
    gh repo view majidnow/BeachEye
    ```
 
-3. Install CMake, 32-bit Python 3.8.10, and an i686 MinGW-w64 toolchain using
-   POSIX threads and MSVCRT. Keep the toolchain in a path without spaces.
+3. Install CMake, 64-bit Python 3.11, MSYS2 UCRT64 GCC and Ninja. In the
+   MSYS2 UCRT64 terminal run:
+   `pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-ninja`.
+   The default toolchain directory is `C:\msys64\ucrt64\bin`.
 4. Run the build command at the top of this file from the repository root.
 
 ### How source resolution works
@@ -75,8 +75,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 `
   -BeachEyeBranch "ver_50_remaster" `
   -BeachEyeCommit "0123456789abcdef0123456789abcdef01234567" `
   -BeachEyeRevision 50 `
-  -UniversalToolchainRoot "C:\Toolchains\mingw32" `
-  -PythonExecutable "C:\Python38-32\python.exe"
+  -PythonExecutable "C:\Python311\python.exe"
 ```
 
 Omitting `-BeachEyeBranch`, `-BeachEyeCommit`, and `-BeachEyeRepository` uses
@@ -136,45 +135,37 @@ The analog-value correction, invalid-event filtering, BeachEye desktop guard,
 and native serialization fixes are behavioral changes and do not add visible
 controls.
 
-One source tree produces one universal 32-bit Windows release. It runs natively on 32-bit Windows and through Windows WOW64 on 64-bit Windows. The application uses Qt's Fusion style, Qt dialogs, scalable SVG assets, and explicit high-DPI handling so the client area remains as consistent as possible between Windows versions.
+One source tree produces one 64-bit Windows release. It does not target 32-bit Windows. The application uses Qt's Fusion style, Qt dialogs, scalable SVG assets, and explicit high-DPI handling so the client area remains as consistent as possible between Windows versions.
 
-## Universal Windows build
+## Windows build
 
-The official `DEVolf.exe` is developed as one universal desktop release for every supported client Windows generation from Windows 7 SP1 through Windows 11. It uses Python 3.8 x86, PySide2/Qt 5.15 x86, PyInstaller 5.13 x86, and an i686 MinGW-w64 POSIX/MSVCRT compiler. The 32-bit executable is intentional: it runs natively on x86 and through Windows emulation on x64 and ARM64.
-
-### Windows compatibility
-
-| Windows generation | Desktop editions | x86 | x64 | ARM64 | Execution mode |
-| --- | --- | :---: | :---: | :---: | --- |
-| Windows 7 SP1 | Starter, Home Basic, Home Premium, Professional, Enterprise, Ultimate | Yes | Yes | — | Native on x86; WOW64 on x64. Starter is x86-only. |
-| Windows 8 | Windows 8, Pro, Enterprise | Yes | Yes | — | Native on x86; WOW64 on x64. |
-| Windows 8.1 | Windows 8.1, Pro, Enterprise | Yes | Yes | — | Native on x86; WOW64 on x64. |
-| Windows 10 | Home, Pro, Pro for Workstations, Enterprise, Education, LTSC | Yes | Yes | Yes | Native on x86; WOW64 on x64; x86 emulation on ARM64. |
-| Windows 11 | Home, Pro, Pro for Workstations, Enterprise, Education, LTSC | — | Yes | Yes | WOW64 on x64; x86 emulation on ARM64. Windows 11 has no x86 edition. |
-
-The same compatibility applies to N, KN, and Single Language variants of the listed desktop editions. Windows RT/RT 8.1 cannot run Win32 x86 desktop applications, and Windows in S mode must be switched out of S mode before installing desktop software.
+The supported build uses Python 3.11 x64, PySide6/Qt 6 and PyInstaller 6.
+It targets 64-bit Windows 10/11. Windows 7/8 and 32-bit operating systems are
+not supported; ARM64 execution through emulation has not been verified.
 
 Requirements:
 
-- 32-bit Python 3.8.10.
+- Python 3.11 x64 (the Python launcher `py -3.11` can create `.venv`).
 - CMake available on `PATH`.
-- An i686 MinGW-w64 toolchain using POSIX threads and MSVCRT. Its path must not contain spaces.
-- Windows 7 must have SP1. On Windows 7, 8, and 8.1, install the x86 Universal C Runtime update (KB2999226) or the Microsoft Visual C++ 2015 x86 Redistributable before running the application.
+- MSYS2 UCRT64 x64 GCC and Ninja (not the older x86/Windows 7 toolchain).
+  From an MSYS2 UCRT64 terminal install:
+  `pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-ninja`.
+  The script uses `C:\msys64\ucrt64\bin`, then falls back to GCC/Ninja on
+  `PATH`. For custom installations, set `DEVOLF_GCC_BIN` to the toolchain's
+  `bin` directory.
+  GCC and Ninja are selected explicitly; MSVC is not used.
+- GitHub CLI, Git, and authorized read access to the private BeachEye dependency.
 
-For offline Python dependency installation, pre-download the pinned win32
-wheels from `requirements-legacy.txt` and run the command below. Authenticated
-network access to the private BeachEye repository is still required:
+Run `build.ps1` without mode flags. The script builds both native decoder DLLs,
+checks the Python and packaged EXE architecture, runs the tests, packages a
+single-file executable, and performs the Qt startup smoke test. It no longer
+accepts `-Legacy`, `-Modern`, or `-UniversalToolchainRoot`.
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 `
-  -UniversalToolchainRoot "C:\Toolchains\mingw32" `
-  -PythonExecutable "C:\Python38-32\python.exe" `
-  -Wheelhouse ".\build\universal-wheelhouse-x86"
-```
+For offline Python package installation, supply `-Wheelhouse` with 64-bit wheels
+for `requirements.txt`. Private BeachEye source access is still required.
 
-The command rejects a 64-bit Python or compiler, rebuilds both native revision DLLs as PE i386, checks their Windows API imports, runs the complete tests against those exact DLLs, packages the one-file EXE, verifies its PE architecture, and runs a Qt startup smoke test.
-
-Windows-owned UI such as the title bar, taskbar, system menus, and printer integration can still differ by OS theme and version. Making those pixels identical would require replacing native window chrome, which is intentionally outside this compatibility change.
+Removing the old Windows build mode does not remove the device's native-first
+protocol fallback or support for deployed settings layouts.
 
 ## Program map
 
@@ -213,8 +204,7 @@ The relay/configuration widgets never open their own device sockets. They emit a
 ├── build.ps1                   Complete test/package/smoke-test pipeline
 ├── build-native.ps1            Native bridge build and compatibility checks
 ├── resolve-beacheye-source.ps1 Authenticated private dependency resolver
-├── requirements.txt            Optional modern-development dependencies
-├── requirements-legacy.txt     Universal Windows release dependencies
+├── requirements.txt            Windows release dependencies
 ├── RELEASE_NOTES.md            Release branch features and behavioral changes
 ├── UPSTREAM_SYNC.md             Commit-by-commit company-source traceability
 ├── build/                      Generated intermediate build files (not source)
@@ -228,7 +218,7 @@ The relay/configuration widgets never open their own device sockets. They emit a
 | File | Responsibility |
 | --- | --- |
 | `code/main.py` | Configures Windows application identity, DPI behavior, Fusion style, assets, `QApplication`, and the main window. It also implements the packaged EXE smoke-test entry point. |
-| `code/wolfeye/qt.py` | Single PySide compatibility boundary. It selects PySide2 for the universal release or PySide6 for optional modern development builds and normalizes Qt 5/6 enums and event APIs. |
+| `code/wolfeye/qt.py` | PySide6/Qt 6 import boundary and common UI helpers. |
 | `code/wolfeye/styles.py` | Generates the shared application stylesheet and references the scalable SVG control assets. |
 | `code/wolfeye/models.py` | Shared data records for device identity, measurement snapshots, and event records. |
 | `code/wolfeye/config_schema.py` | Canonical UI configuration structure, defaults, choices, ranges, and protection-group defaults. |
@@ -269,7 +259,7 @@ The relay/configuration widgets never open their own device sockets. They emit a
 
 | Path | Responsibility |
 | --- | --- |
-| `code/native/beacheye/CMakeLists.txt` | Defines the native DLL build, source selection, static runtime linkage, revision profile, and Windows 7 compatibility baseline. |
+| `code/native/beacheye/CMakeLists.txt` | Defines the native DLL build, source selection, runtime linkage, and revision profile. |
 | `code/native/beacheye/bridge.cpp`, `bridge.h` | Stable exported C ABI used by Python for decode, encode, settings, and provider operations. |
 | `code/native/beacheye/data_provider_adapter.cpp`, `data_provider_adapter.h` | Adapts the company `DataProvider` callbacks and transport behavior to the exported bridge API. |
 | `code/native/beacheye/compat/` | Minimal compatibility headers required by the native company sources. |
@@ -286,11 +276,10 @@ decoding can switch to the exact revision-51 point profile after identification.
 
 | File | Responsibility |
 | --- | --- |
-| `build.ps1` | Builds the universal x86 release by default, enforces matching Python/native architecture, runs all tests, packages a one-file EXE with PyInstaller, verifies its PE header, and smoke-tests the result. `-Modern` remains available for development only. |
-| `build-native.ps1` | Builds revision 50/51 native DLLs in architecture-specific caches, validates the MinGW target and MSVCRT linkage, and rejects imports of unsupported newer Windows APIs. |
+| `build.ps1` | Builds the x64 release, checks Python and packaged EXE architecture, runs all tests, packages a one-file EXE, and smoke-tests the result. |
+| `build-native.ps1` | Builds revision 50/51 DLLs with MSYS2 UCRT64 GCC/Ninja, not MSVC. |
 | `resolve-beacheye-source.ps1` | Requires GitHub CLI authentication, verifies that BeachEye is private, resolves pinned commits, and maintains an external private cache. |
-| `requirements.txt` | Pinned Python 3.11, PySide6, PyInstaller, PyMuPDF, and ReportLab versions for optional modern development builds. |
-| `requirements-legacy.txt` | Pinned Python 3.8, PySide2, PyInstaller, PyMuPDF, ReportLab, and Pillow versions used by the universal x86 release. |
+| `requirements.txt` | Pinned Python 3.11 x64 dependencies for the Windows release. |
 | `beacheye-source.json` | Records only the private repository identifier, branch names, and immutable revision-50/51 commit IDs used by the resolver. |
 | `.gitattributes` | Repository file and line-ending attributes. |
 | `.gitignore` | Excludes generated environments, caches, build intermediates, and packaged outputs. |

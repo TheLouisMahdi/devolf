@@ -4,19 +4,40 @@ param(
     [string]$BeachEyeRepository,
     [string]$BeachEyeCommit,
     [int]$BeachEyeRevision = 0,
-    [switch]$Legacy,
-    [Alias("UniversalToolchainRoot")]
-    [string]$LegacyToolchainRoot,
-    [ValidateSet("x86", "x64")]
-    [string]$Architecture = "x64",
     [string]$OutputDirectory
 )
 
 $ErrorActionPreference = "Stop"
 $projectRoot = $PSScriptRoot
 $source = Join-Path $projectRoot "code\native\beacheye"
-$buildName = if ($Legacy) { "native-beacheye-dataprovider-legacy-$Architecture" } else { "native-beacheye-dataprovider" }
-$build = Join-Path $projectRoot "build\$buildName"
+
+# Pin GCC: the private BeachEye source is not compatible with MSVC.
+$toolchainBin = if ($env:DEVOLF_GCC_BIN) {
+    [System.IO.Path]::GetFullPath($env:DEVOLF_GCC_BIN)
+}
+elseif (Test-Path -LiteralPath "C:\msys64\ucrt64\bin\g++.exe" -PathType Leaf) {
+    "C:\msys64\ucrt64\bin"
+}
+else {
+    $pathCompiler = Get-Command g++.exe -ErrorAction SilentlyContinue
+    if ($null -eq $pathCompiler) {
+        throw "Missing x64 MinGW GCC. Install MSYS2 UCRT64 GCC/Ninja, set DEVOLF_GCC_BIN, or add its bin directory to PATH."
+    }
+    Split-Path $pathCompiler.Source -Parent
+}
+$gcc = Join-Path $toolchainBin "gcc.exe"
+$gxx = Join-Path $toolchainBin "g++.exe"
+$ninja = Join-Path $toolchainBin "ninja.exe"
+foreach ($tool in @($gcc, $gxx, $ninja)) {
+    if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
+        throw "Missing GCC build tool: $tool. Install MSYS2 UCRT64 GCC/Ninja, set DEVOLF_GCC_BIN, or add its bin directory to PATH."
+    }
+}
+$target = (& $gxx -dumpmachine | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $target -ne "x86_64-w64-mingw32") {
+    throw "Expected x64 MinGW GCC (x86_64-w64-mingw32); found '$target'."
+}
+$build = Join-Path $projectRoot "build\native-beacheye-dataprovider-gcc-x64"
 $output = Join-Path $build "wolfeye_beacheye.dll"
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = $source
@@ -24,44 +45,6 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 $destination = Join-Path $OutputDirectory "wolfeye_beacheye.dll"
 $resolver = Join-Path $projectRoot "resolve-beacheye-source.ps1"
 $sourceConfigPath = Join-Path $projectRoot "beacheye-source.json"
-
-$cmakeToolchainArguments = @()
-if ($Legacy) {
-    if ([string]::IsNullOrWhiteSpace($LegacyToolchainRoot)) {
-        $LegacyToolchainRoot = $env:WOLFEYE_LEGACY_MINGW
-    }
-    if ([string]::IsNullOrWhiteSpace($LegacyToolchainRoot)) {
-        throw "Legacy builds require -LegacyToolchainRoot (MinGW-w64 POSIX/MSVCRT)."
-    }
-    $LegacyToolchainRoot = [System.IO.Path]::GetFullPath($LegacyToolchainRoot)
-    if ($LegacyToolchainRoot -match '\s') {
-        throw "LegacyToolchainRoot must not contain spaces: $LegacyToolchainRoot"
-    }
-    $gcc = Join-Path $LegacyToolchainRoot "bin\gcc.exe"
-    $gxx = Join-Path $LegacyToolchainRoot "bin\g++.exe"
-    $make = Join-Path $LegacyToolchainRoot "bin\mingw32-make.exe"
-    $objdump = Join-Path $LegacyToolchainRoot "bin\objdump.exe"
-    foreach ($tool in @($gcc, $gxx, $make, $objdump)) {
-        if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
-            throw "Legacy compiler tool is missing: $tool"
-        }
-    }
-    $compilerDescription = (& cmd.exe /d /c "`"$gxx`" -v 2>&1" | Out-String)
-    if ($compilerDescription -notmatch "Thread model:\s*posix" -or $compilerDescription -notmatch "msvcrt") {
-        throw "Legacy builds require a MinGW-w64 POSIX/MSVCRT compiler."
-    }
-    $compilerTarget = (& $gxx -dumpmachine | Out-String).Trim()
-    $expectedTarget = if ($Architecture -eq "x86") { "i686-w64-mingw32" } else { "x86_64-w64-mingw32" }
-    if ($compilerTarget -ne $expectedTarget) {
-        throw "The $Architecture build requires compiler target $expectedTarget (found $compilerTarget)."
-    }
-    $cmakeToolchainArguments = @(
-        "-DCMAKE_MAKE_PROGRAM=$make",
-        "-DCMAKE_C_COMPILER=$gcc",
-        "-DCMAKE_CXX_COMPILER=$gxx",
-        "-DWOLFEYE_LEGACY_WINDOWS=ON"
-    )
-}
 
 function Invoke-NativeBuild(
     [string]$BuildDirectory,
@@ -71,11 +54,16 @@ function Invoke-NativeBuild(
     $configureArguments = @(
         "-S", $source,
         "-B", $BuildDirectory,
-        "-G", "MinGW Makefiles",
+        "-G", "Ninja",
+        "-DCMAKE_C_COMPILER=$gcc",
+        "-DCMAKE_CXX_COMPILER=$gxx",
+        "-DCMAKE_MAKE_PROGRAM=$ninja",
         "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$BuildDirectory",
+        "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=$BuildDirectory",
         "-DBEACHEYE_DIR=$BeachEyeDirectory",
         "-DBEACHEYE_REVISION=$Revision"
-    ) + $cmakeToolchainArguments
+    )
     & cmake @configureArguments
     if ($LASTEXITCODE -ne 0) {
         throw "Native DataProvider configure failed with exit code $LASTEXITCODE."
@@ -83,33 +71,6 @@ function Invoke-NativeBuild(
     & cmake --build $BuildDirectory --config Release --clean-first --parallel
     if ($LASTEXITCODE -ne 0) {
         throw "Native DataProvider build failed with exit code $LASTEXITCODE."
-    }
-}
-
-function Assert-LegacyImports([string]$Path) {
-    if (-not $Legacy) {
-        return
-    }
-    $imports = (& $objdump -p $Path | Out-String)
-    $expectedFormat = if ($Architecture -eq "x86") { "pei-i386" } else { "pei-x86-64" }
-    if ($imports -notmatch "file format\s+$expectedFormat") {
-        throw "Legacy DLL architecture mismatch: expected $Architecture ($expectedFormat)."
-    }
-    $unsupported = @(
-        "BaseGetNamedObjectDirectory",
-        "GetDpiForSystem",
-        "GetDpiForWindow",
-        "GetSystemTimePreciseAsFileTime",
-        "SetThreadDescription",
-        "WaitOnAddress",
-        "WakeByAddressAll",
-        "WakeByAddressSingle"
-    ) | Where-Object { $imports.Contains($_) }
-    if ($unsupported) {
-        throw "Legacy DLL imports unsupported Windows APIs: $($unsupported -join ', ')"
-    }
-    if ($imports -notmatch "DLL Name:\s+msvcrt\.dll") {
-        throw "Legacy DLL was not linked against MSVCRT."
     }
 }
 
@@ -144,11 +105,13 @@ Write-Host "Building BeachEye branch '$($sourceInfo.Branch)' from $($sourceInfo.
 Write-Host "BeachEye source: $($sourceInfo.Path)"
 Write-Host "BeachEye revision: $BeachEyeRevision"
 
-Invoke-NativeBuild $build $sourceInfo.Path $BeachEyeRevision
-Assert-LegacyImports $output
-New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
-Copy-Item -LiteralPath $output -Destination $destination -Force
-Write-Host "Built native DataProvider: $destination"
+$previousPath = $env:PATH
+$env:PATH = "$toolchainBin;$previousPath"
+try {
+    Invoke-NativeBuild $build $sourceInfo.Path $BeachEyeRevision
+    New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
+    Copy-Item -LiteralPath $output -Destination $destination -Force
+    Write-Host "Built native DataProvider: $destination"
 
 # Revision 51 has a different measurement point profile. Keep revision 50 as
 # the transport/settings source selected by the project, and build the exact
@@ -169,12 +132,14 @@ if ($BeachEyeRevision -eq 50) {
     if ($null -eq $profileSourceInfo -or -not (Test-Path -LiteralPath $profileSourceInfo.Path -PathType Container)) {
         throw "BeachEye revision-51 profile resolution did not return a valid directory."
     }
-    $profileBuildName = if ($Legacy) { "native-beacheye-profile-51-legacy-$Architecture" } else { "native-beacheye-profile-51" }
-    $profileBuild = Join-Path $projectRoot "build\$profileBuildName"
+    $profileBuild = Join-Path $projectRoot "build\native-beacheye-profile-51-gcc-x64"
     $profileOutput = Join-Path $profileBuild "wolfeye_beacheye.dll"
     $profileDestination = Join-Path $OutputDirectory "wolfeye_beacheye_51.dll"
     Invoke-NativeBuild $profileBuild $profileSourceInfo.Path $profileRevision
-    Assert-LegacyImports $profileOutput
     Copy-Item -LiteralPath $profileOutput -Destination $profileDestination -Force
     Write-Host "Built revision-51 measurement decoder: $profileDestination"
+}
+}
+finally {
+    $env:PATH = $previousPath
 }

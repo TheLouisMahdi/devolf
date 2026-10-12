@@ -35,8 +35,8 @@ repository's nested legacy layouts and keeps one canonical application source.
   BeachEye source, while revision 51 uses its exact 394-BI/121-AI point profile.
 - Signal analysis, event handling, firmware/bootloader transfer, EmWolf test
   scenarios, FC22 tester sessions, and PDF reports.
-- One reproducible x86 Windows package for Windows 7 SP1 through Windows 11,
-  including 32-bit systems and 64-bit systems through WOW64.
+- One 64-bit Windows package using Python 3.11, PySide6, and PyInstaller 6.
+  The Python 3.8/MinGW legacy build mode has been removed.
 
 ## Differences from `wolfeye`
 
@@ -53,20 +53,12 @@ repository's nested legacy layouts and keeps one canonical application source.
 
 ## Verification
 
-Targeted native and service tests cover the 3,243-byte settings round trip,
-write status handling, revision-50 compatibility, and the deployed revision-51
-measurement profile. The official Windows executable is built with 32-bit
-Python 3.8.10 and an i686 MinGW-w64 POSIX/MSVCRT toolchain:
+Run `build.ps1` with Python 3.11 x64, CMake, MSYS2 UCRT64 GCC/Ninja,
+and authenticated access to the private BeachEye repository. The
+build executes the tests and performs a packaged EXE startup smoke test.
+The old Windows x86/Windows 7 build and its toolchain parameters were removed.
+The device-level protocol fallback and deployed settings compatibility remain.
 
-```powershell
-$universalToolchain = "C:\Toolchains\mingw32"
-$universalPython = "C:\Python38-32\python.exe"
-
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 `
-  -UniversalToolchainRoot $universalToolchain `
-  -PythonExecutable $universalPython
-```
-
-This produces `Dist\DEVolf.exe`. The build validates the x86 Python,
-native DLL, and packaged EXE architectures, runs the complete test suite
-against the packaged native DLL set, and performs a Qt startup smoke test.
+The native build now uses GCC/Ninja explicitly because the pinned BeachEye
+headers do not compile under MSVC. The GCC cache is separate from the previous
+Visual Studio build directory.

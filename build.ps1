@@ -6,35 +6,22 @@ param(
     [string]$BeachEyeRepository,
     [string]$BeachEyeCommit,
     [int]$BeachEyeRevision = 0,
-    [switch]$Modern,
-    [switch]$Legacy,
-    [Alias("UniversalToolchainRoot")]
-    [string]$LegacyToolchainRoot,
     [string]$PythonExecutable,
     [string]$Wheelhouse
 )
 
 $ErrorActionPreference = "Stop"
 
-if ($Modern -and $Legacy) {
-    throw "Modern and Legacy are mutually exclusive build modes."
-}
-$universal = -not $Modern -and -not $Legacy
-$legacyCompatible = -not $Modern
-$architecture = if ($universal) { "x86" } else { "x64" }
-
-if ($Legacy -and $Name -eq "DEVolf") {
-    $Name = "DEVolf Legacy"
-}
+$architecture = "x64"
 
 if ([System.IO.Path]::GetFileName($Name) -ne $Name) {
     throw "Name must be a file name, not a path: $Name"
 }
 
 $projectRoot = $PSScriptRoot
-$pythonVersionRequired = if ($Modern) { "3.11" } else { "3.8" }
-$pythonBitsRequired = if ($architecture -eq "x86") { 32 } else { 64 }
-$venvName = if ($universal) { ".venv-universal-x86" } elseif ($Legacy) { ".venv-legacy" } else { ".venv" }
+$pythonVersionRequired = "3.11"
+$pythonBitsRequired = 64
+$venvName = ".venv"
 $python = if ([string]::IsNullOrWhiteSpace($PythonExecutable)) {
     Join-Path $projectRoot "$venvName\Scripts\python.exe"
 }
@@ -44,16 +31,9 @@ else {
 $entryPoint = Join-Path $projectRoot "code\main.py"
 $assets = Join-Path $projectRoot "code\assets"
 $icon = Join-Path $assets "wolfeye.ico"
-$nativeDirectory = if ($legacyCompatible) {
-    $packageName = if ($universal) { "native-beacheye-package-universal-x86" } else { "native-beacheye-package-legacy-x64" }
-    Join-Path $projectRoot "build\$packageName"
-}
-else {
-    Join-Path $projectRoot "code\native\beacheye"
-}
+$nativeDirectory = Join-Path $projectRoot "code\native\beacheye"
 $nativeDll = Join-Path $nativeDirectory "wolfeye_beacheye.dll"
-$requirementsName = if ($Modern) { "requirements.txt" } else { "requirements-legacy.txt" }
-$requirements = Join-Path $projectRoot $requirementsName
+$requirements = Join-Path $projectRoot "requirements.txt"
 $dist = Join-Path $projectRoot "Dist"
 $work = Join-Path $projectRoot "build"
 $output = Join-Path $dist "$Name.exe"
@@ -104,32 +84,8 @@ foreach ($requiredFile in @($entryPoint, $icon, $requirements, $nativeBuildScrip
     }
 }
 
-$nativeBuildArguments = @{}
-if (-not [string]::IsNullOrWhiteSpace($BeachEyeBranch)) {
-    $nativeBuildArguments.BeachEyeBranch = $BeachEyeBranch
-}
-if (-not [string]::IsNullOrWhiteSpace($BeachEyeRepository)) {
-    $nativeBuildArguments.BeachEyeRepository = $BeachEyeRepository
-}
-if (-not [string]::IsNullOrWhiteSpace($BeachEyeCommit)) {
-    $nativeBuildArguments.BeachEyeCommit = $BeachEyeCommit
-}
-if ($BeachEyeRevision -gt 0) {
-    $nativeBuildArguments.BeachEyeRevision = $BeachEyeRevision
-}
-$nativeBuildArguments.OutputDirectory = $nativeDirectory
-if ($legacyCompatible) {
-    $nativeBuildArguments.Legacy = $true
-    $nativeBuildArguments.LegacyToolchainRoot = $LegacyToolchainRoot
-    $nativeBuildArguments.Architecture = $architecture
-}
-& $nativeBuildScript @nativeBuildArguments
-if (-not (Test-Path -LiteralPath $nativeDll -PathType Leaf)) {
-    throw "Native BeachEye build did not produce: $nativeDll"
-}
-
 if (-not (Test-Path -LiteralPath $python -PathType Leaf) -and [string]::IsNullOrWhiteSpace($PythonExecutable)) {
-    $launcherVersion = if ($pythonBitsRequired -eq 32) { "-$pythonVersionRequired-32" } else { "-$pythonVersionRequired" }
+    $launcherVersion = "-$pythonVersionRequired"
     py $launcherVersion -m venv (Join-Path $projectRoot $venvName)
     if ($LASTEXITCODE -ne 0) {
         throw "Python $pythonVersionRequired could not create the virtual environment."
@@ -146,6 +102,25 @@ if ($LASTEXITCODE -ne 0) {
 $pythonVersion, $pythonBits = $pythonInfo.Trim().Split("|")
 if ($pythonVersion -ne $pythonVersionRequired -or [int]$pythonBits -ne $pythonBitsRequired) {
     throw "This build requires Python $pythonVersionRequired $pythonBitsRequired-bit (found $pythonVersion $pythonBits-bit)."
+}
+
+$nativeBuildArguments = @{}
+if (-not [string]::IsNullOrWhiteSpace($BeachEyeBranch)) {
+    $nativeBuildArguments.BeachEyeBranch = $BeachEyeBranch
+}
+if (-not [string]::IsNullOrWhiteSpace($BeachEyeRepository)) {
+    $nativeBuildArguments.BeachEyeRepository = $BeachEyeRepository
+}
+if (-not [string]::IsNullOrWhiteSpace($BeachEyeCommit)) {
+    $nativeBuildArguments.BeachEyeCommit = $BeachEyeCommit
+}
+if ($BeachEyeRevision -gt 0) {
+    $nativeBuildArguments.BeachEyeRevision = $BeachEyeRevision
+}
+$nativeBuildArguments.OutputDirectory = $nativeDirectory
+& $nativeBuildScript @nativeBuildArguments
+if (-not (Test-Path -LiteralPath $nativeDll -PathType Leaf)) {
+    throw "Native BeachEye build did not produce: $nativeDll"
 }
 
 if (Test-OutputLocked $output) {
@@ -253,7 +228,7 @@ finally {
 if (-not (Test-Path -LiteralPath $output -PathType Leaf)) {
     throw "Build finished without producing $output"
 }
-$expectedMachine = if ($architecture -eq "x86") { 0x014C } else { 0x8664 }
+$expectedMachine = 0x8664
 $actualMachine = Get-PeMachine $output
 if ($actualMachine -ne $expectedMachine) {
     throw "Packaged EXE architecture mismatch: expected $architecture, PE machine 0x$($actualMachine.ToString('X4'))."
