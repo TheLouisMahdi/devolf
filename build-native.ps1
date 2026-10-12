@@ -10,7 +10,27 @@ param(
 $ErrorActionPreference = "Stop"
 $projectRoot = $PSScriptRoot
 $source = Join-Path $projectRoot "code\native\beacheye"
-$build = Join-Path $projectRoot "build\native-beacheye-dataprovider"
+
+# Pin GCC: the private BeachEye source is not compatible with MSVC.
+$toolchainBin = if ($env:DEVOLF_GCC_BIN) {
+    [System.IO.Path]::GetFullPath($env:DEVOLF_GCC_BIN)
+}
+else {
+    "C:\msys64\ucrt64\bin"
+}
+$gcc = Join-Path $toolchainBin "gcc.exe"
+$gxx = Join-Path $toolchainBin "g++.exe"
+$ninja = Join-Path $toolchainBin "ninja.exe"
+foreach ($tool in @($gcc, $gxx, $ninja)) {
+    if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
+        throw "Missing GCC build tool: $tool. Install MSYS2 UCRT64 GCC and Ninja, or set DEVOLF_GCC_BIN."
+    }
+}
+$target = (& $gxx -dumpmachine | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $target -ne "x86_64-w64-mingw32") {
+    throw "Expected x64 MinGW GCC (x86_64-w64-mingw32); found '$target'."
+}
+$build = Join-Path $projectRoot "build\native-beacheye-dataprovider-gcc-x64"
 $output = Join-Path $build "wolfeye_beacheye.dll"
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = $source
@@ -27,6 +47,10 @@ function Invoke-NativeBuild(
     $configureArguments = @(
         "-S", $source,
         "-B", $BuildDirectory,
+        "-G", "Ninja",
+        "-DCMAKE_C_COMPILER=$gcc",
+        "-DCMAKE_CXX_COMPILER=$gxx",
+        "-DCMAKE_MAKE_PROGRAM=$ninja",
         "-DCMAKE_BUILD_TYPE=Release",
         "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$BuildDirectory",
         "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=$BuildDirectory",
@@ -74,8 +98,11 @@ Write-Host "Building BeachEye branch '$($sourceInfo.Branch)' from $($sourceInfo.
 Write-Host "BeachEye source: $($sourceInfo.Path)"
 Write-Host "BeachEye revision: $BeachEyeRevision"
 
-Invoke-NativeBuild $build $sourceInfo.Path $BeachEyeRevision
-New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
+$previousPath = $env:PATH
+$env:PATH = "$toolchainBin;$previousPath"
+try {
+    Invoke-NativeBuild $build $sourceInfo.Path $BeachEyeRevision
+    New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 Copy-Item -LiteralPath $output -Destination $destination -Force
 Write-Host "Built native DataProvider: $destination"
 
@@ -98,10 +125,14 @@ if ($BeachEyeRevision -eq 50) {
     if ($null -eq $profileSourceInfo -or -not (Test-Path -LiteralPath $profileSourceInfo.Path -PathType Container)) {
         throw "BeachEye revision-51 profile resolution did not return a valid directory."
     }
-    $profileBuild = Join-Path $projectRoot "build\native-beacheye-profile-51"
+    $profileBuild = Join-Path $projectRoot "build\native-beacheye-profile-51-gcc-x64"
     $profileOutput = Join-Path $profileBuild "wolfeye_beacheye.dll"
     $profileDestination = Join-Path $OutputDirectory "wolfeye_beacheye_51.dll"
     Invoke-NativeBuild $profileBuild $profileSourceInfo.Path $profileRevision
     Copy-Item -LiteralPath $profileOutput -Destination $profileDestination -Force
     Write-Host "Built revision-51 measurement decoder: $profileDestination"
+}
+}
+finally {
+    $env:PATH = $previousPath
 }
