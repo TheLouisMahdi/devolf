@@ -1,0 +1,313 @@
+{
+  "setup": {
+    "offsets": {
+      "Va": 2048,
+      "Vb": 2048,
+      "Vc": 2048,
+      "Vt": 2048,
+      "Ia": 2048,
+      "Ib": 2048,
+      "Ic": 2048,
+      "In": 2048
+    },
+    "sample_time_us": 8.2,
+    "digital_input_names": [
+      "DI1-CLOSE",
+      "DI2-OPEN",
+      "DI3",
+      "DI4"
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "PREFAULT_NORMAL",
+      "analogs": {
+        "Va": {
+          "enabled": true,
+          "amplitude": 2.5,
+          "frequency": 50.0,
+          "phase": 0,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "Vb": {
+          "enabled": true,
+          "amplitude": 2.5,
+          "frequency": 50.0,
+          "phase": 120,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "Vc": {
+          "enabled": true,
+          "amplitude": 2.5,
+          "frequency": 50.0,
+          "phase": 240,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "Vt": {
+          "enabled": true,
+          "amplitude": 2.5,
+          "frequency": 50.0,
+          "phase": 0,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "Ia": {
+          "enabled": true,
+          "amplitude": 0.0,
+          "frequency": 50.0,
+          "phase": 0,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "Ib": {
+          "enabled": true,
+          "amplitude": 0.05,
+          "frequency": 50.0,
+          "phase": 120,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "Ic": {
+          "enabled": true,
+          "amplitude": 0.05,
+          "frequency": 50.0,
+          "phase": 240,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "In": {
+          "enabled": true,
+          "amplitude": 0.05,
+          "frequency": 50.0,
+          "phase": 0,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        }
+      },
+      "digital_outputs": [
+        true,
+        false,
+        false,
+        false
+      ],
+      "end_type": "TIME",
+      "digital_input": 1,
+      "end_value": 5.0
+    },
+    {
+      "name": "NPS_NEGATIVE_SEQUENCE_WAIT_OPEN",
+      "analogs": {
+        "Va": {
+          "enabled": true,
+          "amplitude": 2.5,
+          "frequency": 50.0,
+          "phase": 0,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "Vb": {
+          "enabled": true,
+          "amplitude": 2.5,
+          "frequency": 50.0,
+          "phase": 120,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "Vc": {
+          "enabled": true,
+          "amplitude": 2.5,
+          "frequency": 50.0,
+          "phase": 240,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "Vt": {
+          "enabled": true,
+          "amplitude": 2.5,
+          "frequency": 50.0,
+          "phase": 0,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "Ia": {
+          "enabled": true,
+          "amplitude": 0.0,
+          "frequency": 50.0,
+          "phase": 0,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "Ib": {
+          "enabled": true,
+          "amplitude": 0.2,
+          "frequency": 50.0,
+          "phase": 240,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "Ic": {
+          "enabled": true,
+          "amplitude": 0.2,
+          "frequency": 50.0,
+          "phase": 120,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "In": {
+          "enabled": true,
+          "amplitude": 0.2,
+          "frequency": 50.0,
+          "phase": 0,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        }
+      },
+      "digital_outputs": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "end_type": "DI_TOGGLE",
+      "digital_input": 2,
+      "end_value": 1300000.0
+    },
+    {
+      "name": "POST_OPEN_ZERO",
+      "analogs": {
+        "Va": {
+          "enabled": true,
+          "amplitude": 0.0,
+          "frequency": 50.0,
+          "phase": 0,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "Vb": {
+          "enabled": true,
+          "amplitude": 0.0,
+          "frequency": 50.0,
+          "phase": 120,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "Vc": {
+          "enabled": true,
+          "amplitude": 0.0,
+          "frequency": 50.0,
+          "phase": 240,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "Vt": {
+          "enabled": true,
+          "amplitude": 0.0,
+          "frequency": 50.0,
+          "phase": 0,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "Ia": {
+          "enabled": true,
+          "amplitude": 0.0,
+          "frequency": 50.0,
+          "phase": 0,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "Ib": {
+          "enabled": true,
+          "amplitude": 0.0,
+          "frequency": 50.0,
+          "phase": 120,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "Ic": {
+          "enabled": true,
+          "amplitude": 0.0,
+          "frequency": 50.0,
+          "phase": 240,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        },
+        "In": {
+          "enabled": true,
+          "amplitude": 0.0,
+          "frequency": 50.0,
+          "phase": 0,
+          "harmonic1_order": 2,
+          "harmonic1_amplitude": 0.0,
+          "harmonic2_order": 2,
+          "harmonic2_amplitude": 0.0
+        }
+      },
+      "digital_outputs": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "end_type": "INFINITE",
+      "digital_input": 2,
+      "end_value": 4294967295.0
+    }
+  ],
+  "device": {
+    "model": "FC22S",
+    "ip": "192.168.137.10",
+    "firmware": 100,
+    "hardware": 2,
+    "build": 51,
+    "transport": "Native TCP:6536"
+  }
+}
