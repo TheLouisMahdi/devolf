@@ -33,8 +33,10 @@ repository name and the immutable revision-50 and revision-51 commit IDs.
    gh repo view majidnow/BeachEye
    ```
 
-3. Install CMake, 64-bit Python 3.11, and a 64-bit C/C++ compiler supported by
-   CMake (for example Visual Studio Build Tools with Desktop development with C++).
+3. Install CMake, 64-bit Python 3.11, MSYS2 UCRT64 GCC and Ninja. In the
+   MSYS2 UCRT64 terminal run:
+   `pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-ninja`.
+   The default toolchain directory is `C:\msys64\ucrt64\bin`.
 4. Run the build command at the top of this file from the repository root.
 
 ### How source resolution works
@@ -145,8 +147,11 @@ Requirements:
 
 - Python 3.11 x64 (the Python launcher `py -3.11` can create `.venv`).
 - CMake available on `PATH`.
-- A 64-bit C/C++ toolchain available to CMake, such as Visual Studio Build Tools
-  with the Desktop development with C++ workload.
+- MSYS2 UCRT64 x64 GCC and Ninja (not the older x86/Windows 7 toolchain).
+  From an MSYS2 UCRT64 terminal install:
+  `pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-ninja`.
+  For custom installations, set `DEVOLF_GCC_BIN` to the UCRT64 `bin` directory.
+  GCC and Ninja are selected explicitly; MSVC is not used.
 - GitHub CLI, Git, and authorized read access to the private BeachEye dependency.
 
 Run `build.ps1` without mode flags. The script builds both native decoder DLLs,
@@ -270,7 +275,7 @@ decoding can switch to the exact revision-51 point profile after identification.
 | File | Responsibility |
 | --- | --- |
 | `build.ps1` | Builds the x64 release, checks Python and packaged EXE architecture, runs all tests, packages a one-file EXE, and smoke-tests the result. |
-| `build-native.ps1` | Builds revision 50/51 native DLLs using the available CMake toolchain. |
+| `build-native.ps1` | Builds revision 50/51 DLLs with MSYS2 UCRT64 GCC/Ninja, not MSVC. |
 | `resolve-beacheye-source.ps1` | Requires GitHub CLI authentication, verifies that BeachEye is private, resolves pinned commits, and maintains an external private cache. |
 | `requirements.txt` | Pinned Python 3.11 x64 dependencies for the Windows release. |
 | `beacheye-source.json` | Records only the private repository identifier, branch names, and immutable revision-50/51 commit IDs used by the resolver. |
