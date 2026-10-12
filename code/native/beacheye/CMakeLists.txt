@@ -67,6 +67,7 @@ endif()
 target_link_libraries(wolfeye_beacheye PRIVATE ws2_32)
 # Map firmware-only cJSON allocator names to desktop CRT functions.
 target_compile_definitions(wolfeye_beacheye PRIVATE
+    NOMINMAX
     REVISION=${BEACHEYE_REVISION}
     cjosn_helper_malloc=malloc
     cjosn_helper_free=free
