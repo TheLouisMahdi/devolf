@@ -198,7 +198,6 @@ The relay/configuration widgets never open their own device sockets. They emit a
 ├── build-native.ps1            Native bridge build and compatibility checks
 ├── resolve-beacheye-source.ps1 Authenticated private dependency resolver
 ├── requirements.txt            Optional modern-development dependencies
-├── requirements-legacy.txt     Universal Windows release dependencies
 ├── RELEASE_NOTES.md            Release branch features and behavioral changes
 ├── UPSTREAM_SYNC.md             Commit-by-commit company-source traceability
 ├── build/                      Generated intermediate build files (not source)
