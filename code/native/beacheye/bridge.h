@@ -38,7 +38,8 @@ BE_API int __cdecl be_info(const uint8_t*, size_t, BEInfo*);
 BE_API int __cdecl be_measurements(const uint8_t*, size_t, BEPoint*, size_t);
 BE_API int __cdecl be_measurements_named(const uint8_t*, size_t, uint32_t, uint32_t, BENamedPoint*, size_t);
 BE_API int __cdecl be_events(const uint8_t*, size_t, BEEvent*, size_t);
-BE_API int __cdecl be_events_named(const uint8_t*, size_t, uint32_t, uint32_t, BENamedEvent*, size_t);
+/* Event format: 0 = auto, 1 = serialized company stream, 2 = legacy ring. */
+BE_API int __cdecl be_events_named(const uint8_t*, size_t, uint32_t, uint32_t, uint32_t, BENamedEvent*, size_t);
 BE_API int __cdecl be_signal(const uint8_t*, size_t, float*, size_t);
 BE_API int __cdecl be_frame_build(uint8_t, const uint8_t*, size_t, uint8_t*, size_t);
 BE_API int __cdecl be_frame_decode(const uint8_t*, size_t, uint8_t*, uint8_t*, size_t);

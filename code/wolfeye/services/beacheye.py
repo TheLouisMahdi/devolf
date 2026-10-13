@@ -92,7 +92,7 @@ def _native() -> ct.CDLL:
         library = ct.CDLL(str(path))
         library.be_abi_version.argtypes = []
         library.be_abi_version.restype = ct.c_uint32
-        if library.be_abi_version() != 6:
+        if library.be_abi_version() != 7:
             raise ValueError(
                 "Unsupported BeachEye bridge ABI; rebuild wolfeye_beacheye.dll"
             )
@@ -119,6 +119,7 @@ def _native() -> ct.CDLL:
         library.be_events_named.argtypes = [
             ct.c_void_p,
             ct.c_size_t,
+            ct.c_uint32,
             ct.c_uint32,
             ct.c_uint32,
             ct.POINTER(_NamedEvent),
@@ -418,8 +419,11 @@ def _decode_measurements_by_wire_schema(payload: bytes) -> MeasurementSnapshot:
 
 
 def decode_events(
-    payload: bytes, model: str = "", build: int = 0
+    payload: bytes, model: str = "", build: int = 0, *, format_hint: str = "auto"
 ) -> list[EventRecord]:
+    formats = {"auto": 0, "serialized": 1, "ring": 2}
+    if format_hint not in formats:
+        raise ValueError(f"Unsupported event format: {format_hint}")
     events = (_NamedEvent * max(1, len(payload) // 8))()
     buffer = ct.create_string_buffer(payload)
     count = _native().be_events_named(
@@ -427,6 +431,7 @@ def decode_events(
         len(payload),
         _model_code(model),
         build,
+        formats[format_hint],
         events,
         len(events),
     )
@@ -436,6 +441,10 @@ def decode_events(
     invalid_timestamps = 0
     for i in range(count):
         event = events[i]
+        # Company EventToString omits unused/zero-time slots, including an
+        # entirely empty ring or zero-padded serialized buffer.
+        if not event.time_ms:
+            continue
         try:
             # DataProvider::EventToString subtracts the fixed device offset
             # before converting to local time.

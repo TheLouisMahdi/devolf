@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import struct
 import threading
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
 
 from wolfeye.qt import QObject, Signal
 
@@ -67,6 +70,9 @@ LEGACY_FRAME_DOWNLOAD = 0x13
 LEGACY_STATUS_FILE_SIZE = 0x07
 LEGACY_CHECK_DOWNLOAD = 0x02
 LEGACY_FILE_EVENTS = 0x02
+MAX_EVENTS_FILE_SIZE = 1024 * 1024  # Company EVENT_FILE_MAX_SIZE.
+EVENT_RETRIES = 2
+EVENT_COMMANDS = frozenset(("events", "events_check", "events_chunk"))
 
 _COMMANDS = {
     "info": 1,
@@ -114,6 +120,10 @@ class DeviceService(QObject):
         self._event_data = bytearray()
         self._event_size = 0
         self._event_sequence = 0
+        self._event_lock = threading.RLock()
+        self._event_active = False
+        self._event_phase = ""
+        self._event_retries = 0
         self._pending_settings_write: bytes | None = None
 
     @property
@@ -128,6 +138,7 @@ class DeviceService(QObject):
         except ValueError:
             self.message.emit("IP address is invalid.", "error")
             return
+        self._reset_event_download()
         self._stop.clear()
         with self._connection_lock:
             self._connection_ip = address
@@ -144,6 +155,7 @@ class DeviceService(QObject):
 
     def disconnect_device(self) -> None:
         self._stop.set()
+        self._reset_event_download()
         self._pending_settings_write = None
         with self._connection_lock:
             self._connection_ip = ""
@@ -194,15 +206,31 @@ class DeviceService(QObject):
         if self.info.transport == "LEGACY HTTP":
             self._legacy_http_unsupported("event download")
             return
-        if self._legacy_protocol:
+        if not self.connected:
+            self.message.emit("Connect to the WolfEye device first.", "warning")
+            return
+        with self._event_lock:
+            if self._event_active:
+                self.message.emit("Events are already being downloaded.", "info")
+                return
+            self._event_active = True
             self._event_data.clear()
             self._event_size = 0
             self._event_sequence = 0
+            self._event_retries = 0
+            self._event_phase = "events_check" if self._legacy_protocol else "events"
+            self._set_busy(True)
+            self._request_event_phase()
+
+    def _request_event_phase(self) -> None:
+        if self._event_phase == "events_check":
             self._send_native_request(
                 "events_check",
                 LEGACY_FRAME_CHECK,
                 bytes((LEGACY_CHECK_DOWNLOAD, LEGACY_FILE_EVENTS)),
             )
+        elif self._event_phase == "events_chunk":
+            self._request_next_event_chunk()
         else:
             self._send_native_request("events", FRAME_EVENTS)
 
@@ -375,6 +403,7 @@ class DeviceService(QObject):
             self.busy_changed.emit(is_busy)
 
     def _set_connection_failed(self, ip: str, text: str) -> None:
+        self._reset_event_download()
         self.info = DeviceInfo(ip=ip, connected=False, transport="Offline")
         self.connection_changed.emit(self.info)
         self.message.emit(text, "error")
@@ -421,6 +450,8 @@ class DeviceService(QObject):
         except (KeyError, OSError) as exc:
             if command == "settings_write":
                 self._pending_settings_write = None
+            if command in EVENT_COMMANDS:
+                self._reset_event_download()
             self.message.emit(f"Native {command} request failed: {exc}", "error")
 
     def _on_provider_event(
@@ -433,6 +464,9 @@ class DeviceService(QObject):
             return
         if event == PROVIDER_TIMEOUT:
             command = _COMMAND_NAMES.get(tag, f"command {tag}")
+            if command in EVENT_COMMANDS:
+                self._retry_event_download(command, "request timed out")
+                return
             if command == "settings_write":
                 self._pending_settings_write = None
             if (
@@ -454,6 +488,9 @@ class DeviceService(QObject):
         if event == PROVIDER_ERROR:
             text = payload.decode("utf-8", errors="replace") or "Native provider error"
             command = _COMMAND_NAMES.get(tag)
+            if command in EVENT_COMMANDS:
+                self._retry_event_download(command, text)
+                return
             if command == "settings_write":
                 self._pending_settings_write = None
             with self._connection_lock:
@@ -471,6 +508,7 @@ class DeviceService(QObject):
             self.message.emit(text, "error")
             return
         if event == PROVIDER_DISCONNECTED:
+            self._reset_event_download()
             self._pending_settings_write = None
             mode = self._connection_mode
             if (
@@ -500,6 +538,9 @@ class DeviceService(QObject):
     def _handle_native_response(
         self, command: str, _frame_type: int, payload: bytes
     ) -> None:
+        if command in EVENT_COMMANDS:
+            self._handle_event_response(command, _frame_type, payload)
+            return
         try:
             if command == "info":
                 info = decode_info(payload)
@@ -545,12 +586,6 @@ class DeviceService(QObject):
                     else "New WolfEye settings applied.",
                     "info" if status == STATUS_NO_NEED_UPLOAD else "success",
                 )
-            elif command == "events":
-                records = decode_events(payload, self.info.model, self.info.build)
-                self.events_changed.emit(records)
-                self.message.emit(
-                    f"Loaded {len(records)} WolfEye event(s).", "success"
-                )
             elif command == "signal":
                 self.signal_received.emit(decode_signal(payload))
                 self.message.emit("WolfEye signal loaded.", "success")
@@ -559,39 +594,6 @@ class DeviceService(QObject):
                     "RESET accepted; reconnect after the device restarts.", "success"
                 )
                 self.disconnect_device()
-            elif command == "events_check":
-                if (
-                    _frame_type != LEGACY_FRAME_STATUS
-                    or len(payload) < 6
-                    or payload[0] != LEGACY_FRAME_CHECK
-                    or payload[1] != LEGACY_STATUS_FILE_SIZE
-                ):
-                    raise ValueError("device did not return the legacy events file size")
-                self._event_size = struct.unpack_from("<I", payload, 2)[0]
-                if not self._event_size:
-                    self.events_changed.emit([])
-                    self.message.emit("No WolfEye events are available.", "info")
-                else:
-                    self._request_next_event_chunk()
-            elif command == "events_chunk":
-                if len(payload) < 2:
-                    raise ValueError("device returned an incomplete events chunk")
-                sequence = struct.unpack_from("<H", payload)[0]
-                if sequence != self._event_sequence:
-                    raise ValueError(
-                        f"unexpected events chunk {sequence}; expected {self._event_sequence}"
-                    )
-                self._event_data.extend(payload[2:])
-                self._event_sequence += 1
-                if len(self._event_data) < self._event_size:
-                    self._request_next_event_chunk()
-                else:
-                    data = bytes(self._event_data[: self._event_size])
-                    records = decode_events(data, self.info.model, self.info.build)
-                    self.events_changed.emit(records)
-                    self.message.emit(
-                        f"Loaded {len(records)} WolfEye event(s).", "success"
-                    )
         except (ValueError, struct.error) as exc:
             if (
                 command == "info"
@@ -611,6 +613,105 @@ class DeviceService(QObject):
             LEGACY_FRAME_DOWNLOAD,
             struct.pack("<H", self._event_sequence),
         )
+
+    def _reset_event_download(self) -> None:
+        with self._event_lock:
+            active = self._event_active
+            self._event_active = False
+            self._event_phase = ""
+            self._event_data.clear()
+            self._event_size = self._event_sequence = self._event_retries = 0
+            if active:
+                self._set_busy(False)
+
+    def _retry_event_download(self, command: str, reason: str) -> None:
+        with self._event_lock:
+            if not self._event_active or command != self._event_phase:
+                return
+            if self._event_retries >= EVENT_RETRIES:
+                self._reset_event_download()
+                self.message.emit(f"Event download failed after retries: {reason}", "error")
+                return
+            self._event_retries += 1
+            self.message.emit(
+                f"Retrying events ({self._event_retries}/{EVENT_RETRIES}): {reason}",
+                "warning",
+            )
+            self._request_event_phase()
+
+    def _handle_event_response(self, command: str, frame_type: int, payload: bytes) -> None:
+        with self._event_lock:
+            if not self._event_active or command != self._event_phase:
+                return  # A canceled/finished download must not populate the UI.
+            data = payload
+            try:
+                if command == "events_check":
+                    if (frame_type != LEGACY_FRAME_STATUS or len(payload) < 6
+                            or payload[:2] != bytes((LEGACY_FRAME_CHECK, LEGACY_STATUS_FILE_SIZE))):
+                        raise ValueError("device did not return the legacy events file size")
+                    self._event_size = struct.unpack_from("<I", payload, 2)[0]
+                    if self._event_size > MAX_EVENTS_FILE_SIZE:
+                        raise ValueError(f"events file exceeds company limit: {self._event_size} bytes")
+                    if self._event_size:
+                        self._event_phase = "events_chunk"
+                        self._event_retries = 0
+                        self._request_next_event_chunk()
+                        return
+                    data = b""
+                elif command == "events_chunk":
+                    if frame_type != LEGACY_FRAME_DOWNLOAD or len(payload) <= 2:
+                        raise ValueError("device returned an empty or invalid events chunk")
+                    sequence = struct.unpack_from("<H", payload)[0]
+                    if sequence != self._event_sequence:
+                        raise ValueError(f"unexpected events chunk {sequence}; expected {self._event_sequence}")
+                    remaining = self._event_size - len(self._event_data)
+                    if self._event_sequence == 65535 and len(payload) - 2 < remaining:
+                        raise ValueError("events download exceeds the 16-bit chunk sequence limit")
+                    self._event_data.extend(payload[2:2 + remaining])
+                    self._event_sequence += 1
+                    self._event_retries = 0
+                    if len(self._event_data) < self._event_size:
+                        self._request_next_event_chunk()
+                        return
+                    data = bytes(self._event_data)
+                records = decode_events(data, self.info.model, self.info.build)
+                self._reset_event_download()
+                self.events_changed.emit(records)
+                self.message.emit(
+                    f"Loaded {len(records)} WolfEye event(s)." if records
+                    else "No WolfEye events are available.", "success" if records else "info",
+                )
+            except (ValueError, struct.error) as exc:
+                diagnostic = self._save_event_diagnostic(command, frame_type, data, str(exc))
+                reason = f"{self.info.model} build {self.info.build}: {exc}{diagnostic}"
+                if command == "events_chunk" and len(self._event_data) == self._event_size:
+                    # Completed but invalid file: do not request past EOF.
+                    # Release the transaction so a fresh snapshot can be read.
+                    self._reset_event_download()
+                    self.message.emit(f"Event decode failed: {reason}", "error")
+                else:
+                    self._retry_event_download(command, reason)
+
+    def _save_event_diagnostic(self, command: str, frame_type: int, data: bytes, error: str) -> str:
+        try:
+            directory = Path(os.environ.get("LOCALAPPDATA") or str(Path.home())) / "DEVolf" / "diagnostics"
+            directory.mkdir(parents=True, exist_ok=True)
+            capture = directory / "events-response.bin"
+            capture.write_bytes(data)
+            capture.with_suffix(".json").write_text(json.dumps({
+                "captured_at": datetime.now(timezone.utc).isoformat(),
+                "model": self.info.model, "build": self.info.build,
+                "firmware": self.info.firmware, "hardware": self.info.hardware,
+                "bootloader": self.info.bootloader, "bridge_abi": 7,
+                "transport": self.info.transport, "command": command,
+                "frame_type": frame_type, "size": len(data), "error": error,
+                "expected_chunk": self._event_sequence,
+                "received_file_bytes": len(self._event_data),
+                "expected_file_bytes": self._event_size,
+            }, indent=2), encoding="utf-8")
+            return f"; raw response saved to {capture}"
+        except OSError as exc:
+            return f"; diagnostic save failed: {exc}"
 
     @staticmethod
     def _uses_legacy_http(

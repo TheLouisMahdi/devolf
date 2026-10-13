@@ -102,6 +102,57 @@ files match company master; all 60 mapping entries occur exactly once and all
 198 local documentation links/anchors resolve. PowerShell build/resolver
 scripts passed syntax checks. No final EXE was built.
 
+## Event reception correction
+
+Reported device failure: `decode fail invalid 5512 bytes` (2026-10-13).
+The actual failed device bytes were not available, so their format cannot be
+established from the reported length alone. The length matches an 8-byte
+legacy ring header plus 344 16-byte slots; it also exceeds the old 5,120-byte
+receive rejection threshold. Both cases now have regression coverage.
+
+The receive parser accepts the full unsigned 16-bit wire length (up to 65,535
+payload bytes), keeps CRC/sequence checks and handles fragmented TCP delivery.
+Outgoing frames and update chunks keep the pinned company's 5 KiB limit.
+This changes the desktop receive buffer policy, not the company's serializers.
+
+Legacy rings now support binary, analog and 32-bit counter records, the exact
+unwrapped full-buffer boundary, wrapped heads and empty buffers. Serialized
+events continue to use company Event::Deserialize and source-index names for
+both models and all tested builds. Zero-time slots are omitted exactly as in
+company EventToString. Incomplete AI/CC records raise an error rather than
+quietly dropping an event; the established short device-tail tolerance remains.
+The decoder also accepts an explicit serialized/ring format hint for inspection
+of ambiguous captures. Bridge ABI 7 prevents an old DLL from being called with
+the changed event function signature.
+
+Event downloads have one active transaction, two bounded retries for timeouts
+or invalid responses/chunks, sequence validation, empty-chunk rejection and
+the company 1 MiB file-size limit. Repeated chunks do not append duplicate
+bytes. Success, failure and disconnect release busy state; a canceled response
+does not populate the viewer. A completed invalid file is preserved and the
+transaction ends, allowing the operator to request a new snapshot. The viewer
+reapplies its filter after loading and displays milliseconds.
+
+On decode failure the latest raw response and device/transfer metadata are
+saved outside the repository as
+`%LOCALAPPDATA%\DEVolf\diagnostics\events-response.bin` and
+`events-response.json`. Save failures are reported without replacing the
+original error. Unknown/corrupt layouts remain explicit failures; no record
+format is fabricated to force a successful display.
+
+Regression tests cover 5,512-byte rings with all event types and wrap states
+for FC22AR/FC22S builds 50, 51, 52, 256 and 65535; serialized mixed events;
+empty and truncated responses; TCP fragmentation; bad CRC; wrong native
+sequence; native and legacy receive framing; timeout recovery; duplicate and
+empty file chunks; retry exhaustion; exact diagnostic captures; cancellation;
+and viewer filtering. A localhost simulator verifies transport. Physical-device
+verification of the user's original response remains necessary.
+
+Validation: the pinned native dependency compiled with bridge ABI 7; **112
+tests passed in 131.920 seconds**. The final diagnostic-metadata changes also
+passed the 17 DeviceService tests. All 60 company mapping rows and 200 local
+documentation links/anchors were checked. No final application EXE was built.
+
 ## Numeric master alignment (2026-10-13)
 
 The numeric editing behavior was audited against WolfEye `master` at the same

@@ -94,6 +94,13 @@ API. Simulated read/write and measurement tests cover builds 50, 51, 52, 100,
 company wire format; a future firmware format change requires a new source
 audit. See [compatibility and cleanup details](docs/UPSTREAM_SYNC.md#single-source-compatibility-and-cleanup).
 
+Event reception handles the 16-bit wire length independently of the company's
+5 KiB outgoing limit, including 5,512-byte responses. Serialized BI/AI/Counter
+streams and legacy rings share the company point map. Interrupted downloads
+retry twice; invalid responses are saved with device metadata under
+`%LOCALAPPDATA%\DEVolf\diagnostics\events-response.bin` and `.json`.
+See [event verification and remaining limits](docs/UPSTREAM_SYNC.md#event-reception-correction).
+
 ## Features
 
 | Area | Capabilities |

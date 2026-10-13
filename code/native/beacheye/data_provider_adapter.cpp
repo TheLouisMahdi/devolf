@@ -363,10 +363,8 @@ private:
             if (receive_buffer_.size() < 7) return;
             const size_t payload_size = receive_buffer_[2] |
                 (static_cast<size_t>(receive_buffer_[3]) << 8);
-            if (payload_size > MAX_DATA_SIZE) {
-                receive_buffer_.erase(receive_buffer_.begin());
-                continue;
-            }
+            // The uint16 wire length bounds allocation to 65535 bytes. Event
+            // replies can exceed the outgoing 5 KiB company workspace.
             const size_t total = payload_size + 7;
             if (receive_buffer_.size() < total) return;
             uint8_t frame_type = 0;

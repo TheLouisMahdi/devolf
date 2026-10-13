@@ -48,6 +48,22 @@ repository's nested legacy layouts and keeps one canonical application source.
 - One 64-bit Windows package using Python 3.11, PySide6, and PyInstaller 6.
   The Python 3.8/MinGW legacy build mode has been removed.
 
+## Event reception fix (2026-10-13)
+
+- Reported `invalid 5512 bytes` failure covered with ring-decoder and socket
+  regressions. Receive frames accept the full 16-bit length with CRC/sequence
+  validation; outgoing company limits remain intact.
+- Ring counter events, full/wrapped boundaries and empty slots corrected.
+  Truncated AI/CC records fail explicitly. Serialized events use the same
+  pinned company implementation and point maps.
+- Event downloads guard repeated clicks, retry interrupted requests/chunks
+  twice, validate sequences/file sizes and release busy state on every exit.
+  Invalid data and device metadata are saved under the local DEVolf diagnostics
+  folder. Event filters reapply on reload and timestamps show milliseconds.
+- Native bridge ABI is now 7; rebuild the DLL/application before running.
+  Tests use synthetic responses; the original physical-device response has
+  not yet been captured. See [event verification details](UPSTREAM_SYNC.md#event-reception-correction).
+
 ## Differences from `wolfeye`
 
 | Area | `wolfeye` branch | This branch |

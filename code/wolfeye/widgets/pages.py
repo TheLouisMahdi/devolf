@@ -992,13 +992,14 @@ class EventsPage(QWidget):
         for row, record in enumerate(records):
             for col, value in enumerate(
                 (
-                    record.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                    record.timestamp.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
                     record.kind,
                     record.point,
                     record.value,
                 )
             ):
                 self.table.setItem(row, col, QTableWidgetItem(value))
+        self._filter(self.filter.text())
 
     def _filter(self, text: str) -> None:
         needle = text.casefold()

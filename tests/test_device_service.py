@@ -1,5 +1,9 @@
 import struct
 import unittest
+import json
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
 from wolfeye.services.beacheye import PROVIDER_FIRMWARE, PROVIDER_TIMEOUT
 from wolfeye.services.device_service import (
@@ -16,6 +20,10 @@ from wolfeye.services.device_service import (
     LEGACY_FILE_EVENTS,
     LEGACY_FRAME_CHECK,
     LEGACY_FRAME_GET_SETTINGS,
+    LEGACY_FRAME_STATUS,
+    LEGACY_FRAME_DOWNLOAD,
+    LEGACY_STATUS_FILE_SIZE,
+    MAX_EVENTS_FILE_SIZE,
 )
 
 
@@ -111,12 +119,95 @@ class DeviceServiceTests(unittest.TestCase):
         self.service.request_events()
         self.assertEqual(self.provider.requests[-1], (5, FRAME_EVENTS, b""))
 
+        self.service._reset_event_download()
         self.service._legacy_protocol = True
         self.service.request_events()
         self.assertEqual(
             self.provider.requests[-1],
             (8, LEGACY_FRAME_CHECK, bytes((LEGACY_CHECK_DOWNLOAD, LEGACY_FILE_EVENTS))),
         )
+
+    def test_native_events_retry_once_then_populate_ui_and_release_busy(self) -> None:
+        changes, busy = [], []
+        self.service.events_changed.connect(changes.append)
+        self.service.busy_changed.connect(busy.append)
+        self.service.request_events()
+        self.service.request_events()
+        self.assertEqual(len(self.provider.requests), 1)
+        self.service._on_provider_event(PROVIDER_TIMEOUT, 5, 0, b"")
+        self.assertEqual(len(self.provider.requests), 2)
+        event = struct.pack("<H", 0x4000) + (12_600_000).to_bytes(6, "little")
+        self.service._handle_native_response("events", 1, event)
+        self.assertEqual(len(changes[0]), 1)
+        self.assertEqual(busy, [True, False])
+        self.assertFalse(self.service._event_active)
+
+    def test_events_retry_limit_cancellation_and_fresh_request(self) -> None:
+        busy = []
+        self.service.busy_changed.connect(busy.append)
+        self.service.request_events()
+        for _ in range(3):
+            self.service._on_provider_event(PROVIDER_TIMEOUT, 5, 0, b"")
+        self.assertEqual(len(self.provider.requests), 3)
+        self.assertFalse(self.service._event_active)
+        self.assertEqual(busy, [True, False])
+        self.service.request_events()
+        self.service.disconnect_device()
+        changes = []
+        self.service.events_changed.connect(changes.append)
+        self.service._handle_native_response("events", 1, bytes(8))
+        self.assertEqual(changes, [])
+        self.assertEqual(busy, [True, False, True, False])
+
+    @patch.object(DeviceService, "_save_event_diagnostic", return_value="")
+    def test_legacy_events_chunk_retries_preserve_snapshot_and_finish(self, _diagnostic) -> None:
+        changes = []
+        self.service.events_changed.connect(changes.append)
+        self.service._legacy_protocol = True
+        self.service.request_events()
+        event = struct.pack("<H", 0x4000) + (12_600_000).to_bytes(6, "little")
+        size = bytes((LEGACY_FRAME_CHECK, LEGACY_STATUS_FILE_SIZE)) + struct.pack("<I", len(event))
+        self.service._handle_native_response("events_check", LEGACY_FRAME_STATUS, size)
+        self.service._handle_native_response("events_chunk", LEGACY_FRAME_DOWNLOAD, bytes(2))
+        self.assertEqual(self.service._event_sequence, 0)
+        self.assertEqual(bytes(self.service._event_data), b"")
+        self.service._handle_native_response("events_chunk", LEGACY_FRAME_DOWNLOAD, bytes(2) + event[:4])
+        self.assertEqual(self.service._event_sequence, 1)
+        self.service._handle_native_response("events_chunk", LEGACY_FRAME_DOWNLOAD, bytes(2) + event[:4])
+        self.assertEqual(bytes(self.service._event_data), event[:4])
+        self.service._on_provider_event(PROVIDER_TIMEOUT, 9, 0, b"")
+        self.service._handle_native_response("events_chunk", LEGACY_FRAME_DOWNLOAD, b"\x01\x00" + event[4:])
+        self.assertEqual(len(changes[0]), 1)
+        self.assertFalse(self.service._event_active)
+
+    def test_invalid_event_response_is_saved_exactly_and_has_bounded_retries(self) -> None:
+        self.service.info.model = "FC22AR"
+        self.service.info.build = 51
+        payload = b"\xff" * 5512
+        with tempfile.TemporaryDirectory() as temporary, patch.dict("os.environ", {"LOCALAPPDATA": temporary}):
+            self.service.request_events()
+            for _ in range(3):
+                self.service._handle_native_response("events", 1, payload)
+            capture = Path(temporary) / "DEVolf/diagnostics/events-response.bin"
+            self.assertEqual(capture.read_bytes(), payload)
+            metadata = json.loads(capture.with_suffix(".json").read_text())
+            self.assertEqual((metadata["model"], metadata["build"], metadata["size"]), ("FC22AR", 51, 5512))
+        self.assertEqual(len(self.provider.requests), 3)
+        self.assertFalse(self.service._event_active)
+
+    def test_legacy_event_size_limit_and_empty_file(self) -> None:
+        self.service._legacy_protocol = True
+        changes = []
+        self.service.events_changed.connect(changes.append)
+        with tempfile.TemporaryDirectory() as temporary, patch.dict("os.environ", {"LOCALAPPDATA": temporary}):
+            self.service.request_events()
+            too_large = bytes((LEGACY_FRAME_CHECK, LEGACY_STATUS_FILE_SIZE)) + struct.pack("<I", MAX_EVENTS_FILE_SIZE + 1)
+            self.service._handle_native_response("events_check", LEGACY_FRAME_STATUS, too_large)
+            self.assertEqual(bytes(self.service._event_data), b"")
+            empty = bytes((LEGACY_FRAME_CHECK, LEGACY_STATUS_FILE_SIZE)) + bytes(4)
+            self.service._handle_native_response("events_check", LEGACY_FRAME_STATUS, empty)
+        self.assertEqual(changes, [[]])
+        self.assertFalse(self.service._event_active)
 
     def test_reset_response_stops_native_provider(self) -> None:
         self.service.reset_device()

@@ -175,17 +175,17 @@ int append_native_analogs(
 }
 
 bool looks_like_event_ring(const uint8_t* data, size_t size) {
-    if (!data || size < 24 || (size - 8) % 16 != 0) return false;
+    if (!data || size < 8 || (size - 8) % 16 != 0) return false;
     const size_t slots = (size - 8) / 16;
     const size_t next = little(data, 2);
     const uint8_t wrapped = data[2];
-    if (!slots || wrapped > 1 || next >= slots) return false;
+    if (wrapped > 1 || (wrapped ? (!slots || next >= slots) : next > slots)) return false;
     for (size_t i = 3; i < 8; ++i) if (data[i] != 0) return false;
 
     const size_t count = wrapped ? slots : next;
     for (size_t i = 0; i < count; ++i) {
         const uint8_t* record = data + 8 + i * 16;
-        if (record[14] > 1) return false;
+        if (record[14] > 2) return false;
     }
     return true;
 }
@@ -459,7 +459,7 @@ int copy_settings_json(const std::shared_ptr<Settings>& settings, char* out, siz
 }
 }
 
-uint32_t __cdecl be_abi_version(void) { return 6; }
+uint32_t __cdecl be_abi_version(void) { return 7; }
 
 int __cdecl be_info(const uint8_t* data, size_t size, BEInfo* out) {
     if (!data || !out || size < 16) return -1;
@@ -525,6 +525,7 @@ int __cdecl be_measurements_named(
 
 int __cdecl be_events(const uint8_t* data, size_t size, BEEvent* out, size_t capacity) {
     if (!data || !out) return -1;
+    if (size && size < 8) return -1;
     size_t offset = 0, used = 0;
     // Keep DataProvider::EventsDeserialize's tolerance for the device's short
     // trailing bytes, while retaining support for one final 8-byte BI record.
@@ -533,7 +534,7 @@ int __cdecl be_events(const uint8_t* data, size_t size, BEEvent* out, size_t cap
         const auto type = (little(data + offset, 2) >> 12) & 3;
         const size_t length = type == 0 ? 8 : type == 1 ? 10 : type == 2 ? 12 : 0;
         if (!length) return -1;
-        if (size - offset < length) break;
+        if (size - offset < length) return -1;
         uint8_t record[12]{};
         std::memcpy(record, data + offset, length);
         BeachWolf::Event event;
@@ -549,19 +550,21 @@ int __cdecl be_events(const uint8_t* data, size_t size, BEEvent* out, size_t cap
 }
 
 int __cdecl be_events_named(
-    const uint8_t* data, size_t size, uint32_t model, uint32_t build,
+    const uint8_t* data, size_t size, uint32_t model, uint32_t build, uint32_t format,
     BENamedEvent* out, size_t capacity
 ) {
-    if (!data || !out) return -1;
+    if (!data || !out || format > 2) return -1;
     // Some FC22 firmware generations report a new/unknown build while still
     // downloading the raw Events struct.  Detect its strict 8-byte header and
     // 16-byte slot layout instead of trusting the INFO revision alone.
-    if (looks_like_event_ring(data, size)) {
+    const bool ring = looks_like_event_ring(data, size);
+    if (format == 2 && !ring) return -1;
+    if (format != 1 && ring) {
         const size_t slots = (size - 8) / 16;
         const size_t next = little(data, 2);
         const bool wrapped = data[2] != 0;
         const size_t count = wrapped ? slots : std::min(next, slots);
-        if (count > capacity || count > INT32_MAX || (count && next >= slots)) return -1;
+        if (count > capacity || count > INT32_MAX) return -1;
         for (size_t i = 0; i < count; ++i) {
             const size_t index = (next + slots - 1 - i) % slots;
             const uint8_t* record = data + 8 + index * 16;
@@ -640,7 +643,9 @@ int __cdecl be_frame_decode(
 ) {
     if (!frame || !type || size < 7 || frame[0] != START_CAT || frame[1] != START_DOG) return -1;
     const size_t payload_size = little(frame + 2, 2);
-    if (payload_size > MAX_DATA_SIZE || size != payload_size + 7 || payload_size > capacity || (payload_size && !payload)) return -1;
+    // Receive length is a uint16 wire field. MAX_DATA_SIZE is the company's
+    // outgoing workspace size, not a reason to discard larger event responses.
+    if (size != payload_size + 7 || payload_size > capacity || (payload_size && !payload)) return -1;
     if (frame_crc(frame + 2, payload_size + 3) != little(frame + 5 + payload_size, 2)) return -2;
     *type = frame[4];
     if (payload_size) std::memcpy(payload, frame + 5, payload_size);

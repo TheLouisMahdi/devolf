@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -15,7 +16,7 @@ if str(CODE_ROOT) not in sys.path:
 
 from wolfeye.qt import QApplication  # noqa: E402
 
-from wolfeye.models import MeasurementSnapshot  # noqa: E402
+from wolfeye.models import EventRecord, MeasurementSnapshot  # noqa: E402
 from wolfeye.widgets.pages import (  # noqa: E402
     EventsPage,
     MeasurementPage,
@@ -57,6 +58,16 @@ class StatusPageTests(unittest.TestCase):
         self.assertTrue(measurement.refresh_button.isEnabled())
         self.assertTrue(signal.get_button.isEnabled())
         self.assertTrue(events.load_button.isEnabled())
+
+    def test_events_reload_reapplies_filter_and_displays_milliseconds(self) -> None:
+        page = EventsPage()
+        timestamp = datetime(2026, 10, 13, 12, 30, 0, 123000)
+        page.filter.setText("Counter")
+        page.set_events([EventRecord(timestamp, "Binary", "DI 1", "ON")])
+        self.assertTrue(page.table.isRowHidden(0))
+        page.set_events([EventRecord(timestamp, "Counter", "Trip Count", "42")])
+        self.assertFalse(page.table.isRowHidden(0))
+        self.assertTrue(page.table.item(0, 0).text().endswith(".123"))
 
 
 if __name__ == "__main__":

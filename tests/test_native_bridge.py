@@ -38,6 +38,17 @@ from wolfeye.services.native_config import (
 
 
 class NativeBridgeTests(unittest.TestCase):
+    def test_old_event_bridge_abi_requires_rebuild_before_calling_changed_api(self) -> None:
+        beacheye._native.cache_clear()
+        try:
+            with patch.object(beacheye.ct, "CDLL") as loader:
+                loader.return_value.be_abi_version.return_value = 6
+                with self.assertRaisesRegex(ValueError, "rebuild"):
+                    beacheye._native()
+                loader.return_value.be_events_named.assert_not_called()
+        finally:
+            beacheye._native.cache_clear()
+
     def test_device_revision_never_selects_a_different_company_dll(self) -> None:
         beacheye._native.cache_clear()
         try:
@@ -443,6 +454,109 @@ class NativeBridgeTests(unittest.TestCase):
 
         self.assertEqual(event.kind, "Counter")
         self.assertEqual(event.value, str(0x89ABCDEF))
+
+    def test_5512_byte_ring_all_types_and_wrap_boundaries_for_both_models(self) -> None:
+        slots = 344
+        records = [struct.pack("<QIHBx", 12_600_000 + index * 1000,
+                               0x89ABCDEF if index % 3 == 2 else index, 3, index % 3)
+                   for index in range(slots)]
+        for model in ("FC22AR", "FC22S"):
+            for build in (50, 51, 52, 256, 65535):
+                for next_slot, wrapped in ((slots, False), (0, True), (17, True)):
+                    with self.subTest(model=model, build=build, head=next_slot, wrapped=wrapped):
+                        payload = struct.pack("<H?5x", next_slot, wrapped) + b"".join(records)
+                        self.assertEqual(len(payload), 5512)
+                        events = decode_events(payload, model, build)
+                        self.assertEqual(len(events), slots)
+                        newest = (next_slot - 1) % slots
+                        self.assertEqual(events[0].timestamp, datetime.fromtimestamp(newest))
+                        counters = [event for event in events if event.kind == "Counter"]
+                        self.assertTrue(counters)
+                        self.assertTrue(all(event.value == str(0x89ABCDEF) for event in counters))
+
+    def test_serialized_mixed_events_and_empty_slots_for_both_models(self) -> None:
+        bi = struct.pack("<H", 0x4000) + (12_600_000).to_bytes(6, "little")
+        ai = struct.pack("<H", 0x1003) + (12_601_000).to_bytes(6, "little") + struct.pack("<H", 65535)
+        cc = struct.pack("<H", 0x2003) + (12_602_000).to_bytes(6, "little") + struct.pack("<I", 0xFFFFFFFF)
+        for model in ("FC22AR", "FC22S"):
+            for build in (50, 51, 52, 256, 65535):
+                for hint in ("auto", "serialized"):
+                    with self.subTest(model=model, build=build, hint=hint):
+                        events = decode_events(bi + ai + cc + bytes(8) + b"\xaa", model, build, format_hint=hint)
+                        self.assertEqual([event.kind for event in events], ["Binary", "Analog", "Counter"])
+                        self.assertEqual([event.value for event in events], ["ON", "65535", "4294967295"])
+                self.assertEqual(decode_events(bytes(5512), model, build), [])
+                self.assertEqual(decode_events(b"", model, build), [])
+                self.assertEqual(decode_events(bytes(8), model, build, format_hint="ring"), [])
+
+    def test_incomplete_analog_and_counter_events_are_not_silently_lost(self) -> None:
+        for size in range(1, 8):
+            with self.subTest(short=size), self.assertRaises(ValueError):
+                decode_events(bytes(size), "FC22AR", 51, format_hint="serialized")
+        for kind, length in ((1, 10), (2, 12)):
+            for size in range(8, length):
+                payload = struct.pack("<H", kind << 12) + (12_600_000).to_bytes(6, "little") + bytes(size - 8)
+                with self.subTest(kind=kind, size=size), self.assertRaises(ValueError):
+                    decode_events(payload, "FC22AR", 51, format_hint="serialized")
+
+    def test_provider_receives_large_fragmented_events_with_crc_and_sequence_checks(self) -> None:
+        # The reported 5512-byte failure is reproduced through the socket,
+        # not only by calling a decoder with an already assembled payload.
+        payload = struct.pack("<H?5x", 344, False) + b"".join(
+            struct.pack("<QIHBx", 12_600_000 + index * 1000, index, 0, 0)
+            for index in range(344)
+        )
+        def wire_frame(body):
+            header = struct.pack("<HB", len(body), 1)
+            return b"A$" + header + body + struct.pack("<H", crc_hqx(header + body, 0xFFFF))
+        for length in (5120, 5121, 5512, 8192, 65535):
+            body = bytes(length)
+            self.assertEqual(decode_native_frame(wire_frame(body)), (1, body))
+        with self.assertRaises(ValueError):
+            build_native_frame(7, bytes(5512))  # Outgoing company limit stays intact.
+        self.assertEqual(decode_native_frame(wire_frame(payload)), (1, payload))
+        for legacy in (False, True):
+            listener = socket.socket()
+            listener.settimeout(3)
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            replies, errors = [], []
+            complete = threading.Event()
+            def server():
+                try:
+                    with listener.accept()[0] as connection:
+                        connection.settimeout(3)
+                        _, request = decode_native_frame(self._recv_frame(connection))
+                        body = payload if legacy else request[:1] + payload
+                        frame = wire_frame(body)
+                        damaged = frame[:-1] + bytes((frame[-1] ^ 0xFF,))
+                        connection.sendall(damaged)
+                        if not legacy:
+                            wrong_sequence = wire_frame(bytes((request[0] % 255 + 1,)) + payload)
+                            connection.sendall(wrong_sequence)
+                        for start in range(0, len(frame), 137):
+                            connection.sendall(frame[start:start + 137])
+                        complete.wait(3)
+                except BaseException as exc:
+                    errors.append(exc)
+            def callback(event, tag, value, body):
+                if event == PROVIDER_RESPONSE:
+                    replies.append((tag, body))
+                    complete.set()
+            worker = threading.Thread(target=server, daemon=True)
+            worker.start()
+            provider = NativeDataProvider(callback)
+            try:
+                provider.start("127.0.0.1", listener.getsockname()[1], legacy_protocol=legacy)
+                provider.request(5, 7)
+                self.assertTrue(complete.wait(3), f"events response timed out (legacy={legacy})")
+                self.assertEqual(replies, [(5, payload)])
+                self.assertEqual(len(decode_events(replies[0][1], "FC22AR", 51)), 344)
+            finally:
+                provider.close()
+                listener.close()
+                worker.join(3)
+            self.assertFalse(errors)
 
     def test_unknown_revision_uses_serialized_events_not_v50_ring_layout(self) -> None:
         event = struct.pack("<H", 0) + (12_600_000).to_bytes(6, "little")
