@@ -16,7 +16,7 @@ public repository tree.
 
 | Upstream commit | Company change | Location in this branch | Verification |
 | --- | --- | --- | --- |
-| `e9ffe71` | Revision-50 measurements | Existing revision-selected native decoder in `beacheye.py` and generated `wolfeye_beacheye*.dll` files | Native bridge profile tests |
+| `e9ffe71` | Revision-50 measurements | One native decoder in `beacheye.py` and `wolfeye_beacheye.dll`; INFO selects the company point map | Native bridge profile tests |
 | `0b336ae` | Raw ADC signal access | Existing Signal Viewer/native signal decoder | Native signal and UI tests |
 | `9cf377d` | Additional undervoltage stages | `config_schema.py`, `native_config.py`, `config_pages.py` | Native round-trip and binding tests |
 | `4864819` | Complete voltage protection and AR settings | Protection schema/mapping/editor | UV/OV native round-trip and UI binding tests |
@@ -33,7 +33,7 @@ The pinned private dependency includes every company source change through
 `e5aead6` (point updates), `fdddabf` (heater menu fix), `f36e6a7` (Windows
 guard), `950d122` (BI/AI/CC stream events), and `110dd0c` (`C_MAX`).
 
-The bridge uses source-capability checks for the pinned company API. `C_MAX` remains
+The bridge directly uses the pinned `ver_50_remaster` API. `C_MAX` remains
 outside BeachEye's device `Settings` serialization lists exactly as upstream;
 the bridge exposes it to the desktop TCC session without inventing incompatible
 wire bytes.
@@ -61,11 +61,46 @@ Write completion accepts company status `0x00` or `0x09`. Tests exercise this
 INFO/read/measurement/write flow over a localhost relay simulator, including
 the 300-byte response. Physical-device verification remains a separate step.
 
-Validation on 2026-10-13: the selected native library compiled successfully;
+Prior validation on 2026-10-13: the selected native library compiled successfully;
 all **99 tests** passed in 161.484 seconds, including the stale-DLL selection
 regression, point ordering, AR51 native read/write simulation and unchanged
 settings round trips. Build-script syntax and local documentation links were
 also checked. The final application EXE was left for the user to build.
+
+## Single-source compatibility and cleanup
+
+FC22AR (auto recloser) and FC22S (sectionalizer), including build 50, build 51
+and later builds, share the same pinned company Database, Settings, Event and
+transport implementation. The build scripts no longer accept another
+repository, branch or compile-time revision. Old one-argument `DisablePoints`
+and event-deserialization API alternatives were removed from the bridge.
+
+The company `DisablePoints(model, revision)` API accepts an 8-bit revision,
+but device INFO reports a 16-bit build. The bridge now saturates the API
+argument at 255 instead of wrapping. INFO still preserves the original build.
+The pinned source distinguishes build 50 from builds greater than 50, so 256,
+257, 306 and 65535 retain the same post-50 map as 51. This follows the current
+company source; it does not predict unknown future firmware format changes.
+Unexpected measurement layouts remain an explicit decode error.
+
+Tests cover both models at builds **50, 51, 52, 100, 255, 256, 257, 306 and
+65535**: INFO decoding, exact settings reads, packed BI/AI decoding in company
+list order, edited settings writes, sequence bytes, CRC and completion statuses
+`0x00`/`0x09`. Point-map checks additionally cover build 512. The transport is
+tested with a localhost simulator; no physical relay was available for this run.
+
+Fourteen unused DataProvider source/header copies were removed after checking
+compiler dependencies. Only six required CRC, JSON and configuration files
+remain; the native library rebuilt successfully after cleanup. Every removed
+company file remains accounted for in the 60-entry mapping below. Historical
+generated build folders/DLLs are ignored, never selected by the loader, and
+not included in the release package.
+
+Final validation for this cleanup on 2026-10-13: native compilation succeeded
+and **101 tests passed in 137.742 seconds**. The six retained DataProvider
+files match company master; all 60 mapping entries occur exactly once and all
+198 local documentation links/anchors resolve. PowerShell build/resolver
+scripts passed syntax checks. No final EXE was built.
 
 ## Numeric master alignment (2026-10-13)
 
@@ -102,11 +137,11 @@ counterpart means that the responsibility was reimplemented or merged; it
 does not establish line-by-line equality or complete hardware behavior.
 Partial and unported workflows are identified in the notes.
 
-The 20 retained DataProvider files were compared against the exact upstream
-blobs: **17 are identical after CRLF/LF normalization and 3 are adapted**.
+The **six retained DataProvider files** match the exact upstream blobs after
+CRLF/LF normalization. Fourteen unused source/header copies were removed.
 `tw.png` also matches its destination byte-for-byte. The current CMake target
-compiles `DataProvider/src/crc.c` and `DataProvider/cJSON/cJSON.c`; the retained
-provider/scenario/timer C++ files are not selected as translation units.
+compiles `DataProvider/src/crc.c` and `DataProvider/cJSON/cJSON.c` and uses four
+required headers. Active relay transport is implemented in the native adapter.
 
 ### Dependency boundary
 
@@ -115,7 +150,7 @@ Company master records BeachEye gitlink
 gitlink directly: [its dependency manifest](../beacheye-source.json) pins
 `222c24eb813b9798a5eab42a3fed501892f61f26` from `ver_50_remaster` for all
 reported device builds. The authenticated
-resolver downloads them outside the repository. Files inside that separate
+resolver downloads that revision outside the repository. Files inside that separate
 submodule repository are not entries of the WolfEye master tree counted here.
 
 The original Visual Studio project also references ImGui, ImPlot, Asio,
@@ -134,26 +169,26 @@ desktop rendering/dialog stack; the bridge supplies its compatibility headers.
 | [`DataProvider/DataProvider.vcxproj.user`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/DataProvider.vcxproj.user) | [`build.ps1`](../build.ps1)<br>[`build-native.ps1`](../build-native.ps1)<br>[`code/native/beacheye/CMakeLists.txt`](../code/native/beacheye/CMakeLists.txt) | Replaced | Project/filter/local IDE settings have no runtime equivalent; CMake selects native translation units. |
 | [`DataProvider/cJSON/cJSON.c`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/cJSON/cJSON.c) | [`code/native/DataProvider/cJSON/cJSON.c`](../code/native/DataProvider/cJSON/cJSON.c) | Retained / identical | Compiled directly into the native bridge for private Settings JSON conversion. |
 | [`DataProvider/cJSON/cJSON.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/cJSON/cJSON.h) | [`code/native/DataProvider/cJSON/cJSON.h`](../code/native/DataProvider/cJSON/cJSON.h) | Retained / identical | Native JSON declarations used by bridge.cpp and private dependency sources. |
-| [`DataProvider/cJSON/cJSON_Helper.cpp`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/cJSON/cJSON_Helper.cpp) | [`code/native/DataProvider/cJSON/cJSON_Helper.cpp`](../code/native/DataProvider/cJSON/cJSON_Helper.cpp) | Retained / identical | Retained upstream helper source; not a current bridge translation unit. |
-| [`DataProvider/cJSON/cJSON_Helper.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/cJSON/cJSON_Helper.h) | [`code/native/DataProvider/cJSON/cJSON_Helper.h`](../code/native/DataProvider/cJSON/cJSON_Helper.h) | Retained / identical | Retained upstream helper declaration file. |
-| [`DataProvider/cJSON/cJSON_Utils.c`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/cJSON/cJSON_Utils.c) | [`code/native/DataProvider/cJSON/cJSON_Utils.c`](../code/native/DataProvider/cJSON/cJSON_Utils.c) | Retained / identical | Retained JSON utility source; not a current bridge translation unit. |
-| [`DataProvider/cJSON/cJSON_Utils.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/cJSON/cJSON_Utils.h) | [`code/native/DataProvider/cJSON/cJSON_Utils.h`](../code/native/DataProvider/cJSON/cJSON_Utils.h) | Retained / identical | Retained JSON utility declarations. |
+| [`DataProvider/cJSON/cJSON_Helper.cpp`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/cJSON/cJSON_Helper.cpp) | — | Removed / unused | Uncompiled helper implementation removed; current Settings JSON uses the required helper header and cJSON parser. |
+| [`DataProvider/cJSON/cJSON_Helper.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/cJSON/cJSON_Helper.h) | [`code/native/DataProvider/cJSON/cJSON_Helper.h`](../code/native/DataProvider/cJSON/cJSON_Helper.h) | Retained / identical | Required helper declarations used by private Settings/cJSON implementation. |
+| [`DataProvider/cJSON/cJSON_Utils.c`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/cJSON/cJSON_Utils.c) | — | Removed / unused | Unused JSON utility implementation removed; no active application responsibility. |
+| [`DataProvider/cJSON/cJSON_Utils.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/cJSON/cJSON_Utils.h) | — | Removed / unused | Unused JSON utility declarations removed; no active application responsibility. |
 | [`DataProvider/include/ConfigureDef.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/include/ConfigureDef.h) | [`code/native/DataProvider/include/ConfigureDef.h`](../code/native/DataProvider/include/ConfigureDef.h) | Retained / identical | SCADA/configuration enums retained; definitions are available on the native include path. |
-| [`DataProvider/include/DataProvider.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/include/DataProvider.h) | [`code/native/DataProvider/include/DataProvider.h`](../code/native/DataProvider/include/DataProvider.h) | Retained / adapted | Adapted provider declarations retained; the active ABI uses data_provider_adapter.cpp rather than compiling DataProvider.cpp. |
-| [`DataProvider/include/DataProviderTypes.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/include/DataProviderTypes.h) | [`code/native/DataProvider/include/DataProviderTypes.h`](../code/native/DataProvider/include/DataProviderTypes.h) | Retained / adapted | Adapted provider/device/status types retained as compatibility/reference declarations. |
-| [`DataProvider/include/EmWolfScenario.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/include/EmWolfScenario.h) | [`code/native/DataProvider/include/EmWolfScenario.h`](../code/native/DataProvider/include/EmWolfScenario.h) | Retained / identical | Scenario declarations retained; active scenario execution/serialization is in services/emwolf_protocol.py. |
-| [`DataProvider/include/EmWolfSetup.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/include/EmWolfSetup.h) | [`code/native/DataProvider/include/EmWolfSetup.h`](../code/native/DataProvider/include/EmWolfSetup.h) | Retained / identical | Setup declarations retained; active Python Setup/Project model is in services/emwolf_protocol.py. |
-| [`DataProvider/include/EmWolfUtils.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/include/EmWolfUtils.h) | [`code/native/DataProvider/include/EmWolfUtils.h`](../code/native/DataProvider/include/EmWolfUtils.h) | Retained / identical | EmWolf helper definitions retained; active Python protocol supplies validation and serialization. |
-| [`DataProvider/include/TimeUnit.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/include/TimeUnit.h) | [`code/native/DataProvider/include/TimeUnit.h`](../code/native/DataProvider/include/TimeUnit.h) | Retained / identical | Timer unit definitions retained with upstream timer files. |
-| [`DataProvider/include/Timer.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/include/Timer.h) | [`code/native/DataProvider/include/Timer.h`](../code/native/DataProvider/include/Timer.h) | Retained / identical | Timer declarations retained; Timer.cpp is not selected by the current bridge CMake target. |
+| [`DataProvider/include/DataProvider.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/include/DataProvider.h) | [`code/native/beacheye/data_provider_adapter.h`](../code/native/beacheye/data_provider_adapter.h)<br>[`code/wolfeye/services/device_service.py`](../code/wolfeye/services/device_service.py) | Removed / replaced | Unused provider declarations removed; active provider ABI and operation coordination live in the adapter and DeviceService. |
+| [`DataProvider/include/DataProviderTypes.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/include/DataProviderTypes.h) | [`code/native/beacheye/bridge.h`](../code/native/beacheye/bridge.h)<br>[`code/wolfeye/models.py`](../code/wolfeye/models.py) | Removed / replaced | Unused reference types removed; exported ABI and Python records supply device/status data. |
+| [`DataProvider/include/EmWolfScenario.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/include/EmWolfScenario.h) | [`code/wolfeye/services/emwolf_protocol.py`](../code/wolfeye/services/emwolf_protocol.py) | Removed / replaced | Unused C++ scenario declarations removed; Python Scenario supplies active serialization and execution. |
+| [`DataProvider/include/EmWolfSetup.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/include/EmWolfSetup.h) | [`code/wolfeye/services/emwolf_protocol.py`](../code/wolfeye/services/emwolf_protocol.py) | Removed / replaced | Unused C++ setup declarations removed; Python Setup/Project supplies active models. |
+| [`DataProvider/include/EmWolfUtils.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/include/EmWolfUtils.h) | [`code/wolfeye/services/emwolf_protocol.py`](../code/wolfeye/services/emwolf_protocol.py) | Removed / replaced | Unused C++ helper definitions removed; Python protocol supplies validation and serialization. |
+| [`DataProvider/include/TimeUnit.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/include/TimeUnit.h) | [`code/native/beacheye/data_provider_adapter.cpp`](../code/native/beacheye/data_provider_adapter.cpp) | Removed / replaced | Unused timer units removed; active adapter uses chrono/thread timing. |
+| [`DataProvider/include/Timer.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/include/Timer.h) | [`code/native/beacheye/data_provider_adapter.cpp`](../code/native/beacheye/data_provider_adapter.cpp) | Removed / replaced | Unused timer declarations removed; active adapter uses chrono/thread timing. |
 | [`DataProvider/include/crc.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/include/crc.h) | [`code/native/DataProvider/include/crc.h`](../code/native/DataProvider/include/crc.h) | Retained / identical | CRC declarations used by the compiled native CRC implementation. |
-| [`DataProvider/include/logger.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/include/logger.h) | [`code/native/DataProvider/include/logger.h`](../code/native/DataProvider/include/logger.h) | Retained / identical | Company logger header retained; desktop compatibility logger is also supplied in beacheye/compat/logger.h. |
-| [`DataProvider/src/DataProvider.cpp`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/src/DataProvider.cpp) | [`code/native/DataProvider/src/DataProvider.cpp`](../code/native/DataProvider/src/DataProvider.cpp) | Retained / adapted | Adapted source retained but not compiled by current CMake; transport/update state machine lives in data_provider_adapter.cpp and DeviceService. |
-| [`DataProvider/src/EmWolfScenario.cpp`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/src/EmWolfScenario.cpp) | [`code/native/DataProvider/src/EmWolfScenario.cpp`](../code/native/DataProvider/src/EmWolfScenario.cpp) | Retained / identical | Retained source, not a current bridge translation unit; Python emwolf_protocol.py executes the scenario workflow. |
-| [`DataProvider/src/Timer.cpp`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/src/Timer.cpp) | [`code/native/DataProvider/src/Timer.cpp`](../code/native/DataProvider/src/Timer.cpp) | Retained / identical | Retained source, not a current bridge translation unit; active adapter uses chrono/thread timing. |
+| [`DataProvider/include/logger.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/include/logger.h) | [`code/native/beacheye/compat/logger.h`](../code/native/beacheye/compat/logger.h) | Removed / replaced | Unused company logger copy removed; desktop compatibility header supplies the required logging API. |
+| [`DataProvider/src/DataProvider.cpp`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/src/DataProvider.cpp) | [`code/native/beacheye/data_provider_adapter.cpp`](../code/native/beacheye/data_provider_adapter.cpp)<br>[`code/wolfeye/services/device_service.py`](../code/wolfeye/services/device_service.py) | Removed / replaced | Uncompiled provider copy removed; active transport/update state machine lives in the adapter and DeviceService. |
+| [`DataProvider/src/EmWolfScenario.cpp`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/src/EmWolfScenario.cpp) | [`code/wolfeye/services/emwolf_protocol.py`](../code/wolfeye/services/emwolf_protocol.py) | Removed / replaced | Uncompiled scenario implementation removed; Python protocol supplies the active scenario workflow. |
+| [`DataProvider/src/Timer.cpp`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/src/Timer.cpp) | [`code/native/beacheye/data_provider_adapter.cpp`](../code/native/beacheye/data_provider_adapter.cpp) | Removed / replaced | Uncompiled timer implementation removed; active adapter uses chrono/thread timing. |
 | [`DataProvider/src/crc.c`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/src/crc.c) | [`code/native/DataProvider/src/crc.c`](../code/native/DataProvider/src/crc.c) | Retained / identical | Compiled directly into the native bridge; Python emwolf_protocol.py has the EWS2 CRC implementation. |
 | [`WolfEye.sln`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/WolfEye.sln) | [`build.ps1`](../build.ps1)<br>[`build-native.ps1`](../build-native.ps1)<br>[`code/native/beacheye/CMakeLists.txt`](../code/native/beacheye/CMakeLists.txt) | Replaced | Visual Studio solution replaced by Python packaging and GCC/Ninja native build. |
-| [`WolfEye/DeviceInfoType.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/WolfEye/DeviceInfoType.h) | [`code/wolfeye/models.py`](../code/wolfeye/models.py)<br>[`code/wolfeye/services/beacheye.py`](../code/wolfeye/services/beacheye.py)<br>[`code/native/DataProvider/include/DataProviderTypes.h`](../code/native/DataProvider/include/DataProviderTypes.h) | Reimplemented | DeviceInfo plus native device identity decoding; the old standalone declaration is not copied. |
+| [`WolfEye/DeviceInfoType.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/WolfEye/DeviceInfoType.h) | [`code/wolfeye/models.py`](../code/wolfeye/models.py)<br>[`code/wolfeye/services/beacheye.py`](../code/wolfeye/services/beacheye.py)<br>[`code/native/beacheye/bridge.h`](../code/native/beacheye/bridge.h) | Reimplemented | DeviceInfo plus native device identity decoding; the old standalone declaration is not copied. |
 | [`WolfEye/SCADA/include/dnp3/DNP3Test.h`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/WolfEye/SCADA/include/dnp3/DNP3Test.h) | — | Not ported | StartDNP3Master / opendnp3 sample has no DEVolf master implementation. The DNP3 settings editor configures the relay, not this sample. |
 | [`WolfEye/SCADA/src/dnp3/DNP3Test.cpp`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/WolfEye/SCADA/src/dnp3/DNP3Test.cpp) | — | Not ported | StartDNP3Master / opendnp3 sample has no DEVolf master implementation. The DNP3 settings editor configures the relay, not this sample. |
 | [`WolfEye/WolfEye.rc`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/WolfEye/WolfEye.rc) | [`code/assets/wolfeye.ico`](../code/assets/wolfeye.ico)<br>[`code/wolfeye/services/windows_shell.py`](../code/wolfeye/services/windows_shell.py)<br>[`build.ps1`](../build.ps1) | Replaced | Qt/Windows shell identity and PyInstaller icon replace the Win32 resource script. |
@@ -261,13 +296,13 @@ without overwhelming the setup/build guide.
 
 | Path | Responsibility |
 | --- | --- |
-| `code/native/beacheye/CMakeLists.txt` | Defines the native DLL build, source selection, runtime linkage, and revision profile. |
+| `code/native/beacheye/CMakeLists.txt` | Defines the single company native DLL build, required sources and runtime linkage. |
 | `code/native/beacheye/bridge.cpp`, `bridge.h` | Stable exported C ABI used by Python for decode, encode, settings, and provider operations. |
 | `code/native/beacheye/data_provider_adapter.cpp`, `data_provider_adapter.h` | Adapts the company `DataProvider` callbacks and transport behavior to the exported bridge API. |
 | `code/native/beacheye/compat/` | Minimal compatibility headers required by the native company sources. |
-| `code/native/DataProvider/src/` | Retained provider, timer and scenario sources; only `crc.c` is compiled by the current bridge target. Active transport lives in `data_provider_adapter.cpp`. |
-| `code/native/DataProvider/include/` | Public types and declarations for the provider, setup, scenario, logging, timing, and configuration. |
-| `code/native/DataProvider/cJSON/` | Bundled C/C++ JSON parser and helper implementation used by native settings code. |
+| `code/native/DataProvider/src/crc.c` | Required company CRC implementation compiled into the bridge. |
+| `code/native/DataProvider/include/` | Required `ConfigureDef.h` configuration enums and `crc.h` declarations. |
+| `code/native/DataProvider/cJSON/` | Required `cJSON.c`, `cJSON.h` and `cJSON_Helper.h` for native settings JSON. |
 
 BeachEye source is present only in the authenticated external cache. The
 generated `wolfeye_beacheye.dll` is an ignored build artifact. Device INFO
@@ -278,7 +313,7 @@ builds select a point map inside the same company source, not another DLL.
 | File | Responsibility |
 | --- | --- |
 | `build.ps1` | Builds the x64 release, checks Python and packaged EXE architecture, runs all tests, packages a one-file EXE, and smoke-tests the result. |
-| `build-native.ps1` | Builds the selected company-source DLL with MSYS2 UCRT64 GCC/Ninja, not MSVC. |
+| `build-native.ps1` | Builds the pinned ver_50_remaster DLL with MSYS2 UCRT64 GCC/Ninja. |
 | `resolve-beacheye-source.ps1` | Requires GitHub CLI authentication, verifies that BeachEye is private, resolves pinned commits, and maintains an external private cache. |
 | `requirements.txt` | Pinned Python 3.11 x64 dependencies for the Windows release. |
 | `beacheye-source.json` | Records the private repository identifier, selected branch and immutable commit ID used by the resolver. |

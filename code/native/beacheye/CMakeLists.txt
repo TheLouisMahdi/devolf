@@ -13,12 +13,8 @@ endif()
 # selected by build-native.ps1. Bridge code remains outside both source trees.
 set(DATAPROVIDER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../DataProvider" CACHE PATH "Company DataProvider source directory")
 set(BEACHEYE_DIR "" CACHE PATH "Authenticated private BeachEye source directory")
-set(BEACHEYE_REVISION "50" CACHE STRING "BeachEye firmware revision selected by the PowerShell build")
 if(NOT BEACHEYE_DIR)
     message(FATAL_ERROR "BEACHEYE_DIR must point to the authenticated private dependency checkout.")
-endif()
-if(NOT BEACHEYE_REVISION MATCHES "^[0-9]+$")
-    message(FATAL_ERROR "BEACHEYE_REVISION must be a positive integer: ${BEACHEYE_REVISION}")
 endif()
 foreach(REQUIRED_FILE
     "${DATAPROVIDER_DIR}/include/crc.h"
@@ -54,21 +50,11 @@ target_include_directories(wolfeye_beacheye PRIVATE
     "${DATAPROVIDER_DIR}/cJSON"
 )
 
-# BeachEye's active rev-50 line has evolved beyond the older rev-51 profile.
-# Detect source capabilities instead of assuming all branch APIs are identical.
-file(READ "${BEACHEYE_DIR}/include/Configure.h" BEACHEYE_CONFIGURE_HEADER)
-file(READ "${BEACHEYE_DIR}/include/Event.h" BEACHEYE_EVENT_HEADER)
-if(BEACHEYE_CONFIGURE_HEADER MATCHES "c_max\\[4\\]")
-    target_compile_definitions(wolfeye_beacheye PRIVATE BE_HAS_C_MAX=1)
-endif()
-if(BEACHEYE_EVENT_HEADER MATCHES "Deserialize\\(ser4cpp::rseq_t&")
-    target_compile_definitions(wolfeye_beacheye PRIVATE BE_EVENT_RSEQ_API=1)
-endif()
 target_link_libraries(wolfeye_beacheye PRIVATE ws2_32)
 # Map firmware-only cJSON allocator names to desktop CRT functions.
 target_compile_definitions(wolfeye_beacheye PRIVATE
     NOMINMAX
-    REVISION=${BEACHEYE_REVISION}
+    REVISION=50
     cjosn_helper_malloc=malloc
     cjosn_helper_free=free
     cjson_helper_realloc=realloc

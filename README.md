@@ -40,7 +40,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 **Output:** `Dist\DEVolf.exe`.
 
 The script creates `.venv` when needed, installs `requirements.txt`, builds
-the selected company native library, runs the tests, packages one EXE and checks its startup.
+the pinned company native library, runs the tests, packages one EXE and checks its startup.
 GCC/Ninja are selected explicitly. The default toolchain is
 `C:\msys64\ucrt64\bin`; use `DEVOLF_GCC_BIN` for a different installation.
 
@@ -58,20 +58,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 `
 ```
 
 Private source defaults to `%LOCALAPPDATA%\DEVolf\BeachEye`. To choose another
-cache or explicitly select an authorized private revision:
+cache:
 
 ```powershell
 $env:DEVOLF_BEACHEYE_CACHE = 'D:\PrivateBuildCache\DEVolf-BeachEye'
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 `
-  -BeachEyeRepository 'owner/private-repository' `
-  -BeachEyeBranch 'ver_50_remaster' `
-  -BeachEyeCommit '0123456789abcdef0123456789abcdef01234567' `
-  -BeachEyeRevision 50
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-The commit above is a placeholder; provide a real full 40-character SHA.
-Omitting source selectors uses [the pinned manifest](beacheye-source.json).
-The old `-Legacy`, `-Modern` and `-UniversalToolchainRoot` modes are unsupported.
+Source selection comes only from [the pinned manifest](beacheye-source.json).
+The resolver requires `majidnow/BeachEye` and `ver_50_remaster`; alternate
+repository, branch and revision build options have been removed.
 
 </details>
 
@@ -89,6 +85,14 @@ All relay read/write, measurements and events use **BeachEye
 this branch's `DisablePoints(model, build)` mapping; no separate revision-51
 DLL is selected. FC22AR build 51 uses 410 binary and 122 analog points in a
 300-byte packed BI/AI response.
+
+Both **FC22AR (auto recloser)** and **FC22S (sectionalizer)** use the company
+maps for build 50 and builds greater than 50. INFO retains its full 16-bit
+build number; the bridge prevents overflow in the company's 8-bit revision
+API. Simulated read/write and measurement tests cover builds 50, 51, 52, 100,
+255, 256, 257, 306 and 65535 for both models. Later builds work with the current
+company wire format; a future firmware format change requires a new source
+audit. See [compatibility and cleanup details](docs/UPSTREAM_SYNC.md#single-source-compatibility-and-cleanup).
 
 ## Features
 
@@ -120,7 +124,7 @@ commit `989f9fffe4b58bce5b98213de945625780addcda`.
 [The complete file-by-file inventory](docs/UPSTREAM_SYNC.md#file-by-file-mapping)
 accounts for **all 60 tracked master entries**, with source links, destination
 files and an explicit treatment for each file: retained, adapted, split,
-replaced, external or unported.
+replaced, removed, external or unported.
 
 | Company source | Main DEVolf counterpart |
 | --- | --- |
@@ -129,7 +133,7 @@ replaced, external or unported.
 | `TCCCalculator.cpp`, `TCCCalculator.h` | [TCC calculations, editor and chart](code/wolfeye/widgets/tcc_chart.py). |
 | `MeasurementsView`, `EventViewer`, `FaultViewer` | [Qt pages](code/wolfeye/widgets/pages.py), [device service](code/wolfeye/services/device_service.py), [native decoding](code/wolfeye/services/beacheye.py). |
 | `EmWolf.cpp`, `EmWolf.h` | [EmWolf page](code/wolfeye/widgets/emwolf_page.py), [EWS2 protocol](code/wolfeye/services/emwolf_protocol.py) and [reports](code/wolfeye/services/emwolf_report.py). |
-| `DataProvider/include`, `src`, `cJSON` | [Retained native files](code/native/DataProvider); active transport is the [native adapter](code/native/beacheye/data_provider_adapter.cpp). |
+| `DataProvider/include`, `src`, `cJSON` | [Six required CRC/JSON/configuration files](code/native/DataProvider); unused provider/scenario/timer copies were removed. Active transport is the [native adapter](code/native/beacheye/data_provider_adapter.cpp). |
 | `DataProvider/BeachEye` submodule | [Pinned dependency manifest](beacheye-source.json) and [authenticated resolver](resolve-beacheye-source.ps1). |
 | Visual Studio projects, resources and ImGui helpers | [PowerShell build](build.ps1), [CMake](code/native/beacheye/CMakeLists.txt), Qt and [assets](code/assets). |
 
@@ -145,12 +149,12 @@ code/main.py              Application entry point
 code/wolfeye/widgets/     Qt pages, dialogs and charts
 code/wolfeye/services/    Device, protocol, analysis and report services
 code/native/beacheye/     C ABI, active transport adapter and CMake build
-code/native/DataProvider/ Retained company protocol/helper sources
+code/native/DataProvider/ Six required CRC/JSON/configuration files
 code/assets/             Branding, SVG controls and form templates
 tests/                   Regression tests
 docs/                    Mapping, audits, release and publication details
 build.ps1                Complete release build
-build-native.ps1         Selected company branch native build
+build-native.ps1         Pinned ver_50_remaster native build
 requirements.txt         Pinned Python dependencies
 build/                   Generated intermediates and logs
 Dist/                    Generated Windows EXE

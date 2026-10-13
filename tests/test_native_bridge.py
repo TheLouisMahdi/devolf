@@ -17,6 +17,7 @@ from wolfeye.services.beacheye import (
     NativeDataProvider,
     build_native_frame,
     decode_native_frame,
+    decode_info,
     decode_measurements,
     decode_events,
     decode_settings_payload,
@@ -44,14 +45,16 @@ class NativeBridgeTests(unittest.TestCase):
             with patch.object(Path, "is_file", return_value=True), patch.object(
                 beacheye.ct, "CDLL", wraps=beacheye.ct.CDLL
             ) as loader:
-                beacheye._native(51)
+                settings_point_catalog("FC22AR", 51)
+                settings_point_catalog("FC22S", 65535)
             self.assertEqual(Path(loader.call_args.args[0]).name, "wolfeye_beacheye.dll")
+            self.assertEqual(loader.call_count, 1)
         finally:
             beacheye._native.cache_clear()
 
     def test_measurements_follow_company_serialization_order_for_all_profiles(self) -> None:
         for model in ("FC22AR", "FC22S"):
-            for build in (50, 51):
+            for build in (50, 51, 52, 100, 255, 256, 257, 306, 65535):
                 catalog = settings_point_catalog(model, build)
                 bi = catalog["binary"]
                 ai = catalog["analog"]
@@ -71,14 +74,32 @@ class NativeBridgeTests(unittest.TestCase):
                     self.assertEqual(snapshot.binary, {name: index % 3 == 1 for index, (_, name) in enumerate(bi)})
                     self.assertEqual(snapshot.analog, expected_analog)
 
+    def test_future_builds_keep_the_company_post50_map_without_byte_wrap(self) -> None:
+        for model in ("FC22AR", "FC22S"):
+            reference = settings_point_catalog(model, 51)
+            for build in (52, 100, 255, 256, 257, 306, 512, 65535):
+                with self.subTest(model=model, build=build):
+                    self.assertEqual(settings_point_catalog(model, build), reference)
+
     def test_ar51_native_read_measurements_and_write_company_settings(self) -> None:
-        settings_payload = default_settings_file("FC22AR")[:-3]
-        settings = decode_settings_payload(settings_payload, "FC22AR")
-        settings["p"]["g"][0]["o"]["f"]["d"]["t"]["i"] = 425
-        edited_payload = patch_settings_payload(settings_payload, settings, "FC22AR")
-        measurements = (struct.pack("<H", (410 << 4) | 1) + bytes(52)
-                        + struct.pack("<H", (122 << 4) | 2) + bytes(244))
-        info = bytes((1, 2, 3, 4)) + struct.pack("<HH", 51, 0) + b"commit51"
+        self._assert_company_read_write("FC22AR", 51)
+
+    def test_both_models_read_write_with_50_51_and_future_builds(self) -> None:
+        for model in ("FC22AR", "FC22S"):
+            for build in (50, 51, 52, 100, 255, 256, 257, 306, 65535):
+                with self.subTest(model=model, build=build):
+                    self._assert_company_read_write(model, build)
+
+    def _assert_company_read_write(self, model: str, build: int) -> None:
+        settings_payload = default_settings_file(model)[:-3]
+        settings = decode_settings_payload(settings_payload, model)
+        settings["sy"]["m"]["v"] = 25000
+        edited_payload = patch_settings_payload(settings_payload, settings, model)
+        catalog = settings_point_catalog(model, build)
+        bi_count, ai_count = len(catalog["binary"]), len(catalog["analog"])
+        measurements = (struct.pack("<H", (bi_count << 4) | 1) + bytes((bi_count + 7) // 8)
+                        + struct.pack("<H", (ai_count << 4) | 2) + bytes(ai_count * 2))
+        info = bytes((1 if model == "FC22AR" else 2, 2, 3, 4)) + struct.pack("<HH", build, 0) + b"commit51"
         listener = socket.socket()
         listener.settimeout(3)
         listener.bind(("127.0.0.1", 0))
@@ -115,7 +136,7 @@ class NativeBridgeTests(unittest.TestCase):
                                              (3, 0x02, b"\x03"), (4, 0x04, edited_payload),
                                              (5, 0x04, edited_payload)):
                 provider.request(tag, frame_type, payload)
-            self.assertTrue(complete.wait(3), "AR51 read/write flow timed out")
+            self.assertTrue(complete.wait(3), f"{model} build {build} read/write flow timed out")
         finally:
             provider.close()
             listener.close()
@@ -125,11 +146,15 @@ class NativeBridgeTests(unittest.TestCase):
         self.assertEqual([payload[0] for _, payload in received], [1, 2, 3, 4, 5])
         self.assertEqual(received[2][1][1:], b"\x03")
         self.assertEqual(received[3][1][1:], edited_payload)
+        self.assertEqual(decode_info(replies[0][1])["build"], build)
+        self.assertEqual(decode_info(replies[0][1])["model"], model)
         self.assertEqual(replies[1][1], settings_payload)
-        self.assertEqual(len(replies[2][1]), 300)
-        self.assertEqual(len(decode_measurements(replies[2][1], "FC22AR", 51).analog), 122)
+        if model == "FC22AR" and build == 51:
+            self.assertEqual(len(replies[2][1]), 300)
+            self.assertEqual(ai_count, 122)
+        self.assertEqual(len(decode_measurements(replies[2][1], model, build).analog), ai_count)
         self.assertEqual(replies[3:], [(4, b"\x00"), (5, b"\x09")])
-        self.assertEqual(decode_settings_payload(received[3][1][1:], "FC22AR")["p"]["g"][0]["o"]["f"]["d"]["t"]["i"], 425)
+        self.assertEqual(decode_settings_payload(received[3][1][1:], model)["sy"]["m"]["v"], 25000)
 
     def test_company_model_and_revision_aliases_are_normalized(self) -> None:
         self.assertEqual(normalize_device_model("AUTO RECLOSER"), "FC22AR")

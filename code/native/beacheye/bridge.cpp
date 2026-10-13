@@ -109,25 +109,15 @@ uint8_t company_revision(uint32_t build) {
     // DataProvider initializes the revision to 50 until INFO is received.  The
     // Python service always reads INFO before measurements; keep the company
     // default for direct/offline decoder calls as well.
-    return static_cast<uint8_t>(build ? build : 50);
-}
-
-// BeachEye revision 50 accepts an explicit device revision while the newer
-// branches derive the layout from their branch and expose a one-argument API.
-template <typename T>
-auto disable_points(T& points, bool recloser, uint8_t revision, int)
-    -> decltype(points.DisablePoints(recloser, revision), void()) {
-    points.DisablePoints(recloser, revision);
-}
-
-template <typename T>
-void disable_points(T& points, bool recloser, uint8_t, long) {
-    points.DisablePoints(recloser);
+    // INFO carries a uint16 build, while the company API accepts uint8.
+    // Its current maps distinguish 50 from >50. Saturate instead of wrapping
+    // newer builds (e.g. 256) into the old map.
+    return static_cast<uint8_t>(std::min<uint32_t>(build ? build : 50, UINT8_MAX));
 }
 
 template <typename T>
 void disable_points(T& points, bool recloser, uint8_t revision) {
-    disable_points(points, recloser, revision, 0);
+    points.DisablePoints(recloser, revision);
 }
 
 int append_native_binaries(
@@ -358,7 +348,6 @@ bool add_settings_extensions(cJSON* root, const Configure& config) {
             if (cJSON_IsNumber(number)) cJSON_SetNumberValue(number, signed_values[field]);
         }
 
-#ifdef BE_HAS_C_MAX
         cJSON* maximums = cJSON_CreateArray();
         if (!maximums) return false;
         const auto& values = config.c_max[index];
@@ -370,7 +359,6 @@ bool add_settings_extensions(cJSON* root, const Configure& config) {
         add_number(maximums, values.nps2_r);
         cJSON_DeleteItemFromObjectCaseSensitive(group, "cm");
         cJSON_AddItemToObject(group, "cm", maximums);
-#endif
     }
     return true;
 }
@@ -428,7 +416,6 @@ void apply_settings_extensions(cJSON* root, Configure& config) {
         apply_fast_trip_max_mode(group, "e", config.prot.groups[index].ocef.ef);
         apply_fast_trip_max_mode(group, "nps", config.nps[index]);
 
-#ifdef BE_HAS_C_MAX
         cJSON* maximums = cJSON_GetObjectItemCaseSensitive(group, "cm");
         if (cJSON_IsArray(maximums) && cJSON_GetArraySize(maximums) >= 6) {
             auto& values = config.c_max[index];
@@ -439,7 +426,6 @@ void apply_settings_extensions(cJSON* root, Configure& config) {
             values.nps2_f = number_value(cJSON_GetArrayItem(maximums, 4), values.nps2_f, UINT16_MAX);
             values.nps2_r = number_value(cJSON_GetArrayItem(maximums, 5), values.nps2_r, UINT16_MAX);
         }
-#endif
     }
 }
 
@@ -545,22 +531,14 @@ int __cdecl be_events(const uint8_t* data, size_t size, BEEvent* out, size_t cap
     while (offset + 8 <= size) {
         if (used >= capacity || used >= INT32_MAX) return -1;
         const auto type = (little(data + offset, 2) >> 12) & 3;
-#ifdef BE_EVENT_RSEQ_API
         const size_t length = type == 0 ? 8 : type == 1 ? 10 : type == 2 ? 12 : 0;
-#else
-        const size_t length = type == 0 ? 8 : type == 1 ? 10 : 0;
-#endif
         if (!length) return -1;
         if (size - offset < length) break;
         uint8_t record[12]{};
         std::memcpy(record, data + offset, length);
         BeachWolf::Event event;
-#ifdef BE_EVENT_RSEQ_API
         ser4cpp::rseq_t sequence(record, length);
         event.Deserialize(sequence);
-#else
-        event.Deserialize(record);
-#endif
         out[used++] = {
             event.Time(), static_cast<uint32_t>(event.Type()), event.Position(),
             *event.Ptr(), 0

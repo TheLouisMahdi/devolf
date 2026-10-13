@@ -73,8 +73,8 @@ class _NamedEvent(ct.Structure):
     ] + [("name", ct.c_char * 64)]
 
 
-@lru_cache(maxsize=4)
-def _native(revision: int = 0) -> ct.CDLL:
+@lru_cache(maxsize=1)
+def _native() -> ct.CDLL:
     override = os.environ.get("WOLFEYE_NATIVE_DIR")
     if override:
         directory = Path(override)
@@ -358,7 +358,7 @@ def decode_measurements(
     """
     points = (_NamedPoint * max(1, len(payload) * 8))()
     buffer = ct.create_string_buffer(payload)
-    count = _native(build).be_measurements_named(
+    count = _native().be_measurements_named(
         buffer,
         len(payload),
         _model_code(model),
@@ -422,7 +422,7 @@ def decode_events(
 ) -> list[EventRecord]:
     events = (_NamedEvent * max(1, len(payload) // 8))()
     buffer = ct.create_string_buffer(payload)
-    count = _native(build).be_events_named(
+    count = _native().be_events_named(
         buffer,
         len(payload),
         _model_code(model),
@@ -508,7 +508,7 @@ def settings_point_catalog(
 ) -> dict[str, tuple[tuple[int, str], ...]]:
     """Return the exact enabled BI/AI operands used by the company function editor."""
     output = ct.create_string_buffer(1_048_576)
-    size = _native(build).be_point_catalog_json(
+    size = _native().be_point_catalog_json(
         _model_code(model), build, output, len(output)
     )
     raw = _settings_json_result(size, output, "read settings point catalog")

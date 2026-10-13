@@ -2,10 +2,6 @@
 param(
     [ValidateNotNullOrEmpty()]
     [string]$Name = "DEVolf",
-    [string]$BeachEyeBranch,
-    [string]$BeachEyeRepository,
-    [string]$BeachEyeCommit,
-    [int]$BeachEyeRevision = 0,
     [string]$PythonExecutable,
     [string]$Wheelhouse
 )
@@ -105,18 +101,6 @@ if ($pythonVersion -ne $pythonVersionRequired -or [int]$pythonBits -ne $pythonBi
 }
 
 $nativeBuildArguments = @{}
-if (-not [string]::IsNullOrWhiteSpace($BeachEyeBranch)) {
-    $nativeBuildArguments.BeachEyeBranch = $BeachEyeBranch
-}
-if (-not [string]::IsNullOrWhiteSpace($BeachEyeRepository)) {
-    $nativeBuildArguments.BeachEyeRepository = $BeachEyeRepository
-}
-if (-not [string]::IsNullOrWhiteSpace($BeachEyeCommit)) {
-    $nativeBuildArguments.BeachEyeCommit = $BeachEyeCommit
-}
-if ($BeachEyeRevision -gt 0) {
-    $nativeBuildArguments.BeachEyeRevision = $BeachEyeRevision
-}
 $nativeBuildArguments.OutputDirectory = $nativeDirectory
 & $nativeBuildScript @nativeBuildArguments
 if (-not (Test-Path -LiteralPath $nativeDll -PathType Leaf)) {

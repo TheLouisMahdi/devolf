@@ -34,6 +34,15 @@ repository's nested legacy layouts and keeps one canonical application source.
 - Company-source measurement/event decoding: FC22AR build 51 uses the
   `ver_50_remaster` 410-BI/122-AI packed profile (300 bytes), with serializer
   declaration order and no automatic `ver_51_compatible` DLL switch.
+- FC22AR and FC22S share the same company branch for builds 50, 51 and later.
+  INFO retains its 16-bit build; the company's 8-bit revision argument saturates
+  instead of wrapping at 256. Simulated read/write and measurement coverage
+  includes builds 50, 51, 52, 100, 255, 256, 257, 306 and 65535 for both models.
+  Future compatibility follows the current branch's `>50` map and wire format.
+- Alternate source/revision build options and old branch API paths removed.
+  Fourteen unused native source/header files removed; six required company
+  CRC/JSON/configuration files remain. The 60-entry mapping records removals
+  and the active implementations replacing them.
 - Signal analysis, event handling, firmware/bootloader transfer, EmWolf test
   scenarios, FC22 tester sessions, and PDF reports.
 - One 64-bit Windows package using Python 3.11, PySide6, and PyInstaller 6.

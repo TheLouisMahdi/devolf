@@ -1,9 +1,5 @@
 [CmdletBinding()]
 param(
-    [string]$BeachEyeBranch,
-    [string]$BeachEyeRepository,
-    [string]$BeachEyeCommit,
-    [int]$BeachEyeRevision = 0,
     [string]$OutputDirectory
 )
 
@@ -47,8 +43,7 @@ $resolver = Join-Path $projectRoot "resolve-beacheye-source.ps1"
 
 function Invoke-NativeBuild(
     [string]$BuildDirectory,
-    [string]$BeachEyeDirectory,
-    [int]$Revision
+    [string]$BeachEyeDirectory
 ) {
     $configureArguments = @(
         "-S", $source,
@@ -60,8 +55,7 @@ function Invoke-NativeBuild(
         "-DCMAKE_BUILD_TYPE=Release",
         "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$BuildDirectory",
         "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=$BuildDirectory",
-        "-DBEACHEYE_DIR=$BeachEyeDirectory",
-        "-DBEACHEYE_REVISION=$Revision"
+        "-DBEACHEYE_DIR=$BeachEyeDirectory"
     )
     & cmake @configureArguments
     if ($LASTEXITCODE -ne 0) {
@@ -73,41 +67,18 @@ function Invoke-NativeBuild(
     }
 }
 
-$resolveArguments = @{}
-if (-not [string]::IsNullOrWhiteSpace($BeachEyeBranch)) {
-    $resolveArguments.Branch = $BeachEyeBranch
-}
-if (-not [string]::IsNullOrWhiteSpace($BeachEyeRepository)) {
-    $resolveArguments.Repository = $BeachEyeRepository
-}
-if (-not [string]::IsNullOrWhiteSpace($BeachEyeCommit)) {
-    $resolveArguments.Commit = $BeachEyeCommit
-}
-$sourceInfo = & $resolver @resolveArguments
+$sourceInfo = & $resolver
 if ($null -eq $sourceInfo -or -not (Test-Path -LiteralPath $sourceInfo.Path -PathType Container)) {
     throw "BeachEye source resolution did not return a valid directory."
 }
 
-if ($BeachEyeRevision -le 0) {
-    if ($sourceInfo.Branch -match '(?i)ver[_-]?(\d+)') {
-        $BeachEyeRevision = [int]$Matches[1]
-    }
-    else {
-        $BeachEyeRevision = 50
-    }
-}
-if ($BeachEyeRevision -lt 1 -or $BeachEyeRevision -gt 255) {
-    throw "BeachEye revision must be between 1 and 255 (found $BeachEyeRevision)."
-}
-
 Write-Host "Building BeachEye branch '$($sourceInfo.Branch)' from $($sourceInfo.SourceKind)."
 Write-Host "BeachEye source: $($sourceInfo.Path)"
-Write-Host "BeachEye revision: $BeachEyeRevision"
 
 $previousPath = $env:PATH
 $env:PATH = "$toolchainBin;$previousPath"
 try {
-    Invoke-NativeBuild $build $sourceInfo.Path $BeachEyeRevision
+    Invoke-NativeBuild $build $sourceInfo.Path
     New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
     Copy-Item -LiteralPath $output -Destination $destination -Force
     Write-Host "Built native DataProvider: $destination"

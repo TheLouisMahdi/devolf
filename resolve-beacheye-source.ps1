@@ -1,9 +1,5 @@
 [CmdletBinding()]
-param(
-    [string]$Branch,
-    [string]$Repository,
-    [string]$Commit
-)
+param()
 
 $ErrorActionPreference = "Stop"
 
@@ -202,23 +198,13 @@ catch {
     throw "Invalid JSON in ${configPath}: $($_.Exception.Message)"
 }
 
-$branchWasSpecified = -not [string]::IsNullOrWhiteSpace($Branch)
-if ([string]::IsNullOrWhiteSpace($Repository)) {
-    $Repository = [string]$config.repository
+$Repository = [string]$config.repository
+$Branch = [string]$config.branch
+$Commit = [string]$config.commit
+if ($Repository -cne "majidnow/BeachEye" -or $Branch -cne "ver_50_remaster") {
+    throw "DEVolf requires majidnow/BeachEye branch ver_50_remaster in beacheye-source.json."
 }
-if ([string]::IsNullOrWhiteSpace($Branch)) {
-    $Branch = [string]$config.branch
-}
-if ([string]::IsNullOrWhiteSpace($Commit) -and -not $branchWasSpecified) {
-    $Commit = [string]$config.commit
-}
-if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
-    throw "BeachEye repository must use owner/name format: $Repository"
-}
-if ([string]::IsNullOrWhiteSpace($Branch)) {
-    throw "BeachEye branch is empty. Set it in $configPath or pass -Branch."
-}
-if (-not [string]::IsNullOrWhiteSpace($Commit) -and $Commit -notmatch '^[0-9a-fA-F]{40}$') {
+if ($Commit -notmatch '^[0-9a-fA-F]{40}$') {
     throw "BeachEye commit must be a full 40-character SHA: $Commit"
 }
 
@@ -235,7 +221,7 @@ if (([string]($privacy.Output | Select-Object -Last 1)).Trim().ToLowerInvariant(
     throw "Refusing to use '$Repository': the BeachEye dependency must remain private."
 }
 
-$requestedRevision = if ([string]::IsNullOrWhiteSpace($Commit)) { $Branch } else { $Commit }
+$requestedRevision = $Commit
 $encodedRevision = [Uri]::EscapeDataString($requestedRevision)
 $remote = Invoke-NativeCommand $gh.Source @("api", "repos/$Repository/commits/$encodedRevision", "--jq", ".sha")
 if ($remote.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace(($remote.Output -join ""))) {
