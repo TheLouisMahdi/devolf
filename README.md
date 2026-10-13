@@ -40,7 +40,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 **Output:** `Dist\DEVolf.exe`.
 
 The script creates `.venv` when needed, installs `requirements.txt`, builds
-both native profiles, runs the tests, packages one EXE and checks its startup.
+the selected company native library, runs the tests, packages one EXE and checks its startup.
 GCC/Ninja are selected explicitly. The default toolchain is
 `C:\msys64\ucrt64\bin`; use `DEVOLF_GCC_BIN` for a different installation.
 
@@ -82,6 +82,13 @@ cache. The build verifies repository access, privacy and pinned revisions;
 it stops if these checks fail. Private source and generated DLLs are not
 tracked in this repository. The resolver applies desktop compatibility and
 lossless numeric-export transformations only to that external cache.
+
+All relay read/write, measurements and events use **BeachEye
+`ver_50_remaster`**, pinned to `222c24eb813b9798a5eab42a3fed501892f61f26`
+(branch head checked on 2026-10-13). A device reporting build 51 still uses
+this branch's `DisablePoints(model, build)` mapping; no separate revision-51
+DLL is selected. FC22AR build 51 uses 410 binary and 122 analog points in a
+300-byte packed BI/AI response.
 
 ## Features
 
@@ -143,7 +150,7 @@ code/assets/             Branding, SVG controls and form templates
 tests/                   Regression tests
 docs/                    Mapping, audits, release and publication details
 build.ps1                Complete release build
-build-native.ps1         Native revision-50/51 build
+build-native.ps1         Selected company branch native build
 requirements.txt         Pinned Python dependencies
 build/                   Generated intermediates and logs
 Dist/                    Generated Windows EXE

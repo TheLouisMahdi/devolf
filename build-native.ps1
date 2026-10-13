@@ -44,7 +44,6 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 }
 $destination = Join-Path $OutputDirectory "wolfeye_beacheye.dll"
 $resolver = Join-Path $projectRoot "resolve-beacheye-source.ps1"
-$sourceConfigPath = Join-Path $projectRoot "beacheye-source.json"
 
 function Invoke-NativeBuild(
     [string]$BuildDirectory,
@@ -113,32 +112,8 @@ try {
     Copy-Item -LiteralPath $output -Destination $destination -Force
     Write-Host "Built native DataProvider: $destination"
 
-# Revision 51 has a different measurement point profile. Keep revision 50 as
-# the transport/settings source selected by the project, and build the exact
-# revision-51 branch as a decoder selected only after device INFO reports 51.
-if ($BeachEyeRevision -eq 50) {
-    $profileRevision = 51
-    $sourceConfig = Get-Content -LiteralPath $sourceConfigPath -Raw | ConvertFrom-Json
-    $profileBranch = [string]$sourceConfig.revision51Branch
-    $profileCommit = [string]$sourceConfig.revision51Commit
-    if ([string]::IsNullOrWhiteSpace($profileBranch) -or
-        $profileCommit -notmatch '^[0-9a-fA-F]{40}$') {
-        throw "beacheye-source.json must pin revision51Branch and a full revision51Commit SHA."
-    }
-    $profileSourceInfo = & $resolver `
-        -Branch $profileBranch `
-        -Repository $sourceInfo.Repository `
-        -Commit $profileCommit
-    if ($null -eq $profileSourceInfo -or -not (Test-Path -LiteralPath $profileSourceInfo.Path -PathType Container)) {
-        throw "BeachEye revision-51 profile resolution did not return a valid directory."
-    }
-    $profileBuild = Join-Path $projectRoot "build\native-beacheye-profile-51-gcc-x64"
-    $profileOutput = Join-Path $profileBuild "wolfeye_beacheye.dll"
-    $profileDestination = Join-Path $OutputDirectory "wolfeye_beacheye_51.dll"
-    Invoke-NativeBuild $profileBuild $profileSourceInfo.Path $profileRevision
-    Copy-Item -LiteralPath $profileOutput -Destination $profileDestination -Force
-    Write-Host "Built revision-51 measurement decoder: $profileDestination"
-}
+# All reported device builds use the selected company source. Its Database
+# DisablePoints(model, device_build) owns revision-specific measurement maps.
 }
 finally {
     $env:PATH = $previousPath

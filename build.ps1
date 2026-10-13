@@ -185,10 +185,6 @@ raise SystemExit(0 if result.wasSuccessful() else 1)
         "--add-data", "$assets;assets",
         "--add-binary", "$nativeDll;native/beacheye"
     )
-    Get-ChildItem -LiteralPath $nativeDirectory -Filter "wolfeye_beacheye_*.dll" -File |
-        ForEach-Object {
-            $arguments += @("--add-binary", "$($_.FullName);native/beacheye")
-        }
     $arguments += $entryPoint
     New-Item -ItemType Directory -Path $work -Force | Out-Null
 

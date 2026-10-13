@@ -33,11 +33,39 @@ The pinned private dependency includes every company source change through
 `e5aead6` (point updates), `fdddabf` (heater menu fix), `f36e6a7` (Windows
 guard), `950d122` (BI/AI/CC stream events), and `110dd0c` (`C_MAX`).
 
-The bridge uses source-capability checks so the pinned rev-50 API and the older
-rev-51 measurement-profile source can still be built together. `C_MAX` remains
+The bridge uses source-capability checks for the pinned company API. `C_MAX` remains
 outside BeachEye's device `Settings` serialization lists exactly as upstream;
 the bridge exposes it to the desktop TCC session without inventing incompatible
 wire bytes.
+
+## Current BeachEye read/write authority (2026-10-13)
+
+The current dependency is company `ver_50_remaster` at
+`222c24eb813b9798a5eab42a3fed501892f61f26`, verified against the branch head.
+The earlier `110dd0c` pin above records the previous synchronization state.
+The newest commit adds `GeneralElement.cmax`; it does not change the settings
+serialization lists compared with that previous pin.
+
+All device builds, including **FC22AR build 51**, use this same company's
+Database, Settings and event implementation. The prior `ver_51_compatible`
+DLL selection was removed: its 394-BI/121-AI response was 296 bytes, whereas
+the selected branch's FC22AR build-51 mapping is 410 BI / 122 AI, 300 bytes.
+Packed BI/AI values follow the enabled declaration list used by the company
+Serializer, rather than sorting values by DNP presentation index. The distinct
+old byte-per-binary format retains its existing legacy DNP-order mapping.
+
+The native provider adds/removes the company sequence byte and validates frame
+CRC. Settings reads preserve the received payload; writes serialize/patch
+through the same Settings ABI and send that payload without the file trailer.
+Write completion accepts company status `0x00` or `0x09`. Tests exercise this
+INFO/read/measurement/write flow over a localhost relay simulator, including
+the 300-byte response. Physical-device verification remains a separate step.
+
+Validation on 2026-10-13: the selected native library compiled successfully;
+all **99 tests** passed in 161.484 seconds, including the stale-DLL selection
+regression, point ordering, AR51 native read/write simulation and unchanged
+settings round trips. Build-script syntax and local documentation links were
+also checked. The final application EXE was left for the user to build.
 
 ## Numeric master alignment (2026-10-13)
 
@@ -85,8 +113,8 @@ provider/scenario/timer C++ files are not selected as translation units.
 Company master records BeachEye gitlink
 `23283b73478b61b244aa344a159d2ad671689bf4`. DEVolf does **not** check out that
 gitlink directly: [its dependency manifest](../beacheye-source.json) pins
-`110dd0c9d25e0a700c2662fe3442e117940ad2cf` for revision 50 and
-`718b40999d2cf80a1469e6a5a35b18353d8dcb34` for revision 51. The authenticated
+`222c24eb813b9798a5eab42a3fed501892f61f26` from `ver_50_remaster` for all
+reported device builds. The authenticated
 resolver downloads them outside the repository. Files inside that separate
 submodule repository are not entries of the WolfEye master tree counted here.
 
@@ -100,7 +128,7 @@ desktop rendering/dialog stack; the bridge supplies its compatibility headers.
 | Company master entry | DEVolf destination | Treatment | Responsibility / limit |
 | --- | --- | --- | --- |
 | [`.gitmodules`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/.gitmodules) | [`beacheye-source.json`](../beacheye-source.json)<br>[`resolve-beacheye-source.ps1`](../resolve-beacheye-source.ps1) | Replaced | Submodule access is replaced by authenticated external dependency resolution. |
-| [`DataProvider/BeachEye`](https://github.com/majidnow/wolfeye/tree/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/BeachEye) | [`beacheye-source.json`](../beacheye-source.json)<br>[`resolve-beacheye-source.ps1`](../resolve-beacheye-source.ps1)<br>[`code/native/beacheye/CMakeLists.txt`](../code/native/beacheye/CMakeLists.txt) | External dependency | Master gitlink: 23283b73478b61b244aa344a159d2ad671689bf4. DEVolf separately pins rev-50 and rev-51; no in-tree source copy. |
+| [`DataProvider/BeachEye`](https://github.com/majidnow/wolfeye/tree/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/BeachEye) | [`beacheye-source.json`](../beacheye-source.json)<br>[`resolve-beacheye-source.ps1`](../resolve-beacheye-source.ps1)<br>[`code/native/beacheye/CMakeLists.txt`](../code/native/beacheye/CMakeLists.txt) | External dependency | Master gitlink: 23283b73478b61b244aa344a159d2ad671689bf4. DEVolf pins the current ver_50_remaster source for all device builds; no in-tree source copy. |
 | [`DataProvider/DataProvider.vcxproj`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/DataProvider.vcxproj) | [`build.ps1`](../build.ps1)<br>[`build-native.ps1`](../build-native.ps1)<br>[`code/native/beacheye/CMakeLists.txt`](../code/native/beacheye/CMakeLists.txt) | Replaced | Project/filter/local IDE settings have no runtime equivalent; CMake selects native translation units. |
 | [`DataProvider/DataProvider.vcxproj.filters`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/DataProvider.vcxproj.filters) | [`build.ps1`](../build.ps1)<br>[`build-native.ps1`](../build-native.ps1)<br>[`code/native/beacheye/CMakeLists.txt`](../code/native/beacheye/CMakeLists.txt) | Replaced | Project/filter/local IDE settings have no runtime equivalent; CMake selects native translation units. |
 | [`DataProvider/DataProvider.vcxproj.user`](https://github.com/majidnow/wolfeye/blob/989f9fffe4b58bce5b98213de945625780addcda/DataProvider/DataProvider.vcxproj.user) | [`build.ps1`](../build.ps1)<br>[`build-native.ps1`](../build-native.ps1)<br>[`code/native/beacheye/CMakeLists.txt`](../code/native/beacheye/CMakeLists.txt) | Replaced | Project/filter/local IDE settings have no runtime equivalent; CMake selects native translation units. |
@@ -241,20 +269,19 @@ without overwhelming the setup/build guide.
 | `code/native/DataProvider/include/` | Public types and declarations for the provider, setup, scenario, logging, timing, and configuration. |
 | `code/native/DataProvider/cJSON/` | Bundled C/C++ JSON parser and helper implementation used by native settings code. |
 
-BeachEye source is present only in the authenticated external cache. Generated
-`wolfeye_beacheye.dll` files are ignored build artifacts. When revision 50 is
-selected, the build also produces `wolfeye_beacheye_51.dll` so measurement
-decoding can switch to the exact revision-51 point profile after identification.
+BeachEye source is present only in the authenticated external cache. The
+generated `wolfeye_beacheye.dll` is an ignored build artifact. Device INFO
+builds select a point map inside the same company source, not another DLL.
 
 ### Build and dependency files
 
 | File | Responsibility |
 | --- | --- |
 | `build.ps1` | Builds the x64 release, checks Python and packaged EXE architecture, runs all tests, packages a one-file EXE, and smoke-tests the result. |
-| `build-native.ps1` | Builds revision 50/51 DLLs with MSYS2 UCRT64 GCC/Ninja, not MSVC. |
+| `build-native.ps1` | Builds the selected company-source DLL with MSYS2 UCRT64 GCC/Ninja, not MSVC. |
 | `resolve-beacheye-source.ps1` | Requires GitHub CLI authentication, verifies that BeachEye is private, resolves pinned commits, and maintains an external private cache. |
 | `requirements.txt` | Pinned Python 3.11 x64 dependencies for the Windows release. |
-| `beacheye-source.json` | Records only the private repository identifier, branch names, and immutable revision-50/51 commit IDs used by the resolver. |
+| `beacheye-source.json` | Records the private repository identifier, selected branch and immutable commit ID used by the resolver. |
 | `.gitattributes` | Repository file and line-ending attributes. |
 | `.gitignore` | Excludes generated environments, caches, build intermediates, and packaged outputs. |
 

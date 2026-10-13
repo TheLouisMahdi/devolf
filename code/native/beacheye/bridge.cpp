@@ -97,12 +97,11 @@ int parse_legacy_blocks(const uint8_t* data, size_t size, std::vector<Block>& bl
 }
 
 template <typename T>
-std::vector<typename T::value_type*> enabled_by_dnp(T& points) {
+std::vector<typename T::value_type*> enabled_in_wire_order(T& points) {
     std::vector<typename T::value_type*> result;
     for (auto& point : points) if (point.IsEnabled()) result.push_back(&point);
-    std::sort(result.begin(), result.end(), [](const auto* a, const auto* b) {
-        return a->dnp3.index < b->dnp3.index;
-    });
+    // Database Serialize/Deserialize walks the enabled declaration list.
+    // DataProvider sorts DNP indices only for presentation after decoding.
     return result;
 }
 
@@ -138,7 +137,13 @@ int append_native_binaries(
     BIs points;
     for (auto& point : points.list) point.Enable();
     disable_points(points, recloser, company_revision(build));
-    auto sorted = enabled_by_dnp(points.list);
+    auto sorted = enabled_in_wire_order(points.list);
+    // The separately recognized legacy byte-per-binary format used DNP order.
+    if (!block.binary_packed) {
+        std::sort(sorted.begin(), sorted.end(), [](const auto* a, const auto* b) {
+            return a->dnp3.index < b->dnp3.index;
+        });
+    }
     if (block.count != sorted.size() || block.count > capacity - used) return -1;
     for (size_t wire = 0; wire < sorted.size(); ++wire) {
         auto* point = sorted[wire];
@@ -165,7 +170,7 @@ int append_native_analogs(
     AIs points(settings);
     for (auto& point : points.list) point.Enable();
     disable_points(points, recloser, company_revision(build));
-    auto sorted = enabled_by_dnp(points.list);
+    auto sorted = enabled_in_wire_order(points.list);
     if (block.count != sorted.size() || block.count > capacity - used) return -1;
     for (size_t wire = 0; wire < sorted.size(); ++wire) {
         auto* point = sorted[wire];

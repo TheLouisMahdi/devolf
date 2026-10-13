@@ -21,7 +21,9 @@ private commit directly at build time.
 - The root commit uses the GitHub `noreply` identity rather than a personal email.
 - `resolve-beacheye-source.ps1` requires GitHub CLI authentication and confirms
   that the configured dependency repository is private.
-- Revision-50 and revision-51 dependencies are pinned by full commit SHA.
+- The selected `ver_50_remaster` dependency is pinned by full commit SHA and
+  serves every reported device build; an INFO build number does not change
+  the source repository branch.
 - Private source is cloned outside the public repository under
   `%LOCALAPPDATA%\DEVolf\BeachEye` by default.
 - The build fails closed when the user lacks access, the repository is public,

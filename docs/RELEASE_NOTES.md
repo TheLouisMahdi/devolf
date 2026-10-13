@@ -7,7 +7,7 @@ repository's nested legacy layouts and keeps one canonical application source.
 ## Product features
 
 - Synced with company WolfEye `master` at `989f9ff` and pinned BeachEye
-  `ver_50_remaster` at `110dd0c`; see [the synchronization manifest](UPSTREAM_SYNC.md) for the commit map.
+  `ver_50_remaster` at `222c24e`; see [the synchronization manifest](UPSTREAM_SYNC.md) for the commit map and previous pins.
 - User-facing product identity and the default executable name are `DEVolf`;
   compatibility-facing WolfEye/BeachEye package, DLL, and schema names remain
   unchanged.
@@ -19,7 +19,7 @@ repository's nested legacy layouts and keeps one canonical application source.
 - Independent digital-output recognition time added beside pulse duration.
 - Fast-trip TCC max-current mode/multiplier and min/max-bounded curve plotting.
 - Binary, analog, and 32-bit counter event decoding using the current BeachEye
-  stream API, while retaining the older revision-51 decoder profile.
+  stream API from the same selected `ver_50_remaster` dependency for every device build.
 
 - Native BeachEye/DataProvider TCP transport with automatic one-time fallback
   to the legacy protocol when the native handshake fails.
@@ -31,8 +31,9 @@ repository's nested legacy layouts and keeps one canonical application source.
 - Byte-exact settings round trips so unchanged payloads remain unchanged.
 - Write completion based on the company's status response (`0x00` or `0x09`),
   without a second read that can race or report a false failure.
-- Revision-selected measurement/event decoding: revision 50 remains the main
-  BeachEye source, while revision 51 uses its exact 394-BI/121-AI point profile.
+- Company-source measurement/event decoding: FC22AR build 51 uses the
+  `ver_50_remaster` 410-BI/122-AI packed profile (300 bytes), with serializer
+  declaration order and no automatic `ver_51_compatible` DLL switch.
 - Signal analysis, event handling, firmware/bootloader transfer, EmWolf test
   scenarios, FC22 tester sessions, and PDF reports.
 - One 64-bit Windows package using Python 3.11, PySide6, and PyInstaller 6.
@@ -48,7 +49,7 @@ repository's nested legacy layouts and keeps one canonical application source.
 | TCC workflow | Basic element editing | Dedicated editor and chart with company curve calculations |
 | Legacy settings | Current 3,439-byte layout only | Current and deployed 3,243-byte layouts with preserved offsets |
 | Settings write | Follow-up readback after status | Validates status directly and clears failed/pending writes safely |
-| Build-51 measurements | Uses the main decoder profile | Loads the exact revision-51 decoder after device INFO |
+| Build-51 measurements | Company branch point maps | Uses the selected `ver_50_remaster` Database with the INFO build number |
 | Release contents | Historical and duplicated project trees | Source, tests, docs, official scenarios, and build scripts only |
 
 ## Verification

@@ -58,7 +58,8 @@ numeric controls, extended and boundary values through both FC22AR and FC22S
 serialization, overflow rejection, signed quantities, millisecond precision,
 unchanged floats and TCC element switching. No final application EXE is built.
 
-Result on 2026-10-13: both native profiles compiled successfully; the complete
+Initial numeric-audit result on 2026-10-13, before the later read/write source
+alignment: both native profiles compiled successfully; the complete
 suite passed **96 tests** in 142.539 seconds. No physical device write was
 performed.
 
@@ -70,5 +71,5 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
 Output: `Dist\DEVolf.exe`. The build resolves the private dependency, builds
-both native profiles, installs requirements, runs tests, packages and smoke
+the selected company native library, installs requirements, runs tests, packages and smoke
 tests the application.

@@ -7,6 +7,8 @@ import threading
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
+from wolfeye.services import beacheye
 
 from wolfeye.services.beacheye import (
     PROVIDER_FIRMWARE,
@@ -35,6 +37,100 @@ from wolfeye.services.native_config import (
 
 
 class NativeBridgeTests(unittest.TestCase):
+    def test_device_revision_never_selects_a_different_company_dll(self) -> None:
+        beacheye._native.cache_clear()
+        try:
+            # Even a stale packaged revision DLL must not determine the source.
+            with patch.object(Path, "is_file", return_value=True), patch.object(
+                beacheye.ct, "CDLL", wraps=beacheye.ct.CDLL
+            ) as loader:
+                beacheye._native(51)
+            self.assertEqual(Path(loader.call_args.args[0]).name, "wolfeye_beacheye.dll")
+        finally:
+            beacheye._native.cache_clear()
+
+    def test_measurements_follow_company_serialization_order_for_all_profiles(self) -> None:
+        for model in ("FC22AR", "FC22S"):
+            for build in (50, 51):
+                catalog = settings_point_catalog(model, build)
+                bi = catalog["binary"]
+                ai = catalog["analog"]
+                bits = bytearray((len(bi) + 7) // 8)
+                for index in range(len(bi)):
+                    if index % 3 == 1:
+                        bits[index // 8] |= 1 << (index % 8)
+                payload = (struct.pack("<H", (len(bi) << 4) | 1) + bits
+                           + struct.pack("<H", (len(ai) << 4) | 2)
+                           + b"".join(struct.pack("<H", index + 123) for index in range(len(ai))))
+                snapshot = decode_measurements(payload, model, build)
+                expected_analog = {}
+                for index, (point_id, name) in enumerate(ai):
+                    key = name if name not in expected_analog else f"{name} [{point_id - 1}]"
+                    expected_analog[key] = float(index + 123)
+                with self.subTest(model=model, build=build):
+                    self.assertEqual(snapshot.binary, {name: index % 3 == 1 for index, (_, name) in enumerate(bi)})
+                    self.assertEqual(snapshot.analog, expected_analog)
+
+    def test_ar51_native_read_measurements_and_write_company_settings(self) -> None:
+        settings_payload = default_settings_file("FC22AR")[:-3]
+        settings = decode_settings_payload(settings_payload, "FC22AR")
+        settings["p"]["g"][0]["o"]["f"]["d"]["t"]["i"] = 425
+        edited_payload = patch_settings_payload(settings_payload, settings, "FC22AR")
+        measurements = (struct.pack("<H", (410 << 4) | 1) + bytes(52)
+                        + struct.pack("<H", (122 << 4) | 2) + bytes(244))
+        info = bytes((1, 2, 3, 4)) + struct.pack("<HH", 51, 0) + b"commit51"
+        listener = socket.socket()
+        listener.settimeout(3)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        received = []
+        server_errors = []
+        replies = []
+        complete = threading.Event()
+
+        def server():
+            try:
+                connection, _ = listener.accept()
+                with connection:
+                    connection.settimeout(3)
+                    for response in (info, settings_payload, measurements, b"\x00", b"\x09"):
+                        frame_type, payload = decode_native_frame(self._recv_frame(connection))
+                        received.append((frame_type, payload))
+                        connection.sendall(build_native_frame(0x01, payload[:1] + response))
+            except BaseException as exc:
+                server_errors.append(exc)
+
+        def callback(event, tag, value, payload):
+            if event == PROVIDER_RESPONSE:
+                replies.append((tag, payload))
+                if len(replies) == 5:
+                    complete.set()
+
+        worker = threading.Thread(target=server, daemon=True)
+        worker.start()
+        provider = NativeDataProvider(callback)
+        try:
+            provider.start("127.0.0.1", listener.getsockname()[1])
+            for tag, frame_type, payload in ((1, 0x05, b""), (2, 0x03, b""),
+                                             (3, 0x02, b"\x03"), (4, 0x04, edited_payload),
+                                             (5, 0x04, edited_payload)):
+                provider.request(tag, frame_type, payload)
+            self.assertTrue(complete.wait(3), "AR51 read/write flow timed out")
+        finally:
+            provider.close()
+            listener.close()
+            worker.join(3)
+        self.assertFalse(server_errors)
+        self.assertEqual([kind for kind, _ in received], [0x05, 0x03, 0x02, 0x04, 0x04])
+        self.assertEqual([payload[0] for _, payload in received], [1, 2, 3, 4, 5])
+        self.assertEqual(received[2][1][1:], b"\x03")
+        self.assertEqual(received[3][1][1:], edited_payload)
+        self.assertEqual(replies[1][1], settings_payload)
+        self.assertEqual(len(replies[2][1]), 300)
+        self.assertEqual(len(decode_measurements(replies[2][1], "FC22AR", 51).analog), 122)
+        self.assertEqual(replies[3:], [(4, b"\x00"), (5, b"\x09")])
+        self.assertEqual(decode_settings_payload(received[3][1][1:], "FC22AR")["p"]["g"][0]["o"]["f"]["d"]["t"]["i"], 425)
+
     def test_company_model_and_revision_aliases_are_normalized(self) -> None:
         self.assertEqual(normalize_device_model("AUTO RECLOSER"), "FC22AR")
         self.assertEqual(normalize_device_model("Sectionalizer"), "FC22S")
@@ -228,15 +324,15 @@ class NativeBridgeTests(unittest.TestCase):
 
     def test_measurement_decoder_uses_exact_revision_51_point_profile(self) -> None:
         payload = (
-            struct.pack("<H", (394 << 4) | 0x01)
-            + bytes(50)
-            + struct.pack("<H", (121 << 4) | 0x02)
-            + b"".join(struct.pack("<H", value) for value in range(121))
+            struct.pack("<H", (410 << 4) | 0x01)
+            + bytes(52)
+            + struct.pack("<H", (122 << 4) | 0x02)
+            + b"".join(struct.pack("<H", value) for value in range(122))
         )
-        self.assertEqual(len(payload), 296)
+        self.assertEqual(len(payload), 300)
         snapshot = decode_measurements(payload, "FC22AR", 51)
-        self.assertEqual(len(snapshot.binary), 394)
-        self.assertEqual(len(snapshot.analog), 121)
+        self.assertEqual(len(snapshot.binary), 410)
+        self.assertEqual(len(snapshot.analog), 122)
         self.assertIn("Open", snapshot.binary)
         self.assertIn("Closed", snapshot.binary)
         self.assertEqual(snapshot.analog["Ia"], 0.0)
@@ -245,10 +341,10 @@ class NativeBridgeTests(unittest.TestCase):
 
     def test_measurement_decoder_rejects_profile_from_another_known_revision(self) -> None:
         payload = (
-            struct.pack("<H", (448 << 4) | 0x01)
-            + bytes(56)
-            + struct.pack("<H", (120 << 4) | 0x02)
-            + bytes(240)
+            struct.pack("<H", (394 << 4) | 0x01)
+            + bytes(50)
+            + struct.pack("<H", (121 << 4) | 0x02)
+            + bytes(242)
         )
         with self.assertRaisesRegex(ValueError, "does not match FC22AR revision 51"):
             decode_measurements(payload, "FC22AR", 51)

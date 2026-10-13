@@ -85,8 +85,9 @@ def _native(revision: int = 0) -> ct.CDLL:
             else Path(__file__).resolve().parents[2]
         )
         directory = root / "native" / "beacheye"
-    profile = directory / f"wolfeye_beacheye_{revision}.dll"
-    path = profile if revision and profile.is_file() else directory / "wolfeye_beacheye.dll"
+    # Device build numbers select DisablePoints inside the company branch;
+    # they must not select a different BeachEye repository branch/DLL.
+    path = directory / "wolfeye_beacheye.dll"
     try:
         library = ct.CDLL(str(path))
         library.be_abi_version.argtypes = []
