@@ -153,6 +153,57 @@ tests passed in 131.920 seconds**. The final diagnostic-metadata changes also
 passed the 17 DeviceService tests. All 60 company mapping rows and 200 local
 documentation links/anchors were checked. No final application EXE was built.
 
+### Captured firmware serialization correction
+
+The subsequent real capture identifies **FC22AR build 51, firmware 100,
+hardware/bootloader 2** with a **5,112-byte serialized response**, not the
+earlier reported 5,512-byte ring hypothesis. It contains 634 binary records
+and four Counter records whose transmitted values occupy two bytes; their
+values are 8, 7, 3 and 2. Eleven zero-time binary records are unused, leaving
+**627 visible events**. The original bytes remain outside tracked source.
+
+Company history confirms the cause. At BeachEye commit
+[`b83f083`](https://github.com/majidnow/BeachEye/blob/b83f083650fa373709b22ac4920fcab7f2814c83/include/Event.h),
+Event::SerializeSize reports 10 bytes for every nonbinary event, while
+Event::Serialize writes a 32-bit CC value (12 bytes). Advancing the output
+pointer by 10 lets the next event overwrite the upper CC word. The current
+[`950d122` implementation](https://github.com/majidnow/BeachEye/blob/950d122e65347bf4361da041d2cb0e5f543bb1a9/include/Event.h)
+uses 12 bytes for CC. The captured device still exhibits the earlier wire
+layout even though it reports build 51.
+
+The bridge derives record sizes from the pinned Event::SerializeSize API and
+validates the complete stream, including company header/type bits, before
+decoding any records. It considers the current CC32 layout and the proven
+deployed CC16 layout. Complete record boundaries take precedence over a partial
+tail; consuming current zero padding as extra empty records does not override
+a valid CC32 stream. Equal consumption prefers the current layout. No packet-size constant, model or build
+selects this wire layout. Short CC values are zero-extended for the pinned
+Event::Deserialize implementation; current 32-bit values are never truncated.
+Explicit `serialized16`/`serialized32` hints are available when inspecting
+ambiguous captures, alongside serialized auto-detection and ring inspection.
+Source-index names still come from the same pinned company Database.
+
+Event records now retain the actual transmitted value width. A short Counter
+has a viewer tooltip identifying its 16-bit device value. Upper bits that old
+firmware overwrote cannot be recovered; the application preserves the bits
+actually received. Unknown/invalid streams remain explicit errors with saved
+raw diagnostics. Binary protocol schema and CRC checks are still required;
+fixed total-size assumptions have been removed from this event decoder.
+
+Native bridge ABI **8** requires rebuilding old DLLs. The real capture was
+replayed through both FC22AR/FC22S models, builds 0, 50, 51, 52, 256 and 65535,
+and direct/native plus chunked/legacy DeviceService paths: every run produced
+the same 627 timestamps/types/values, no decode errors and released busy state.
+Public regression tests use synthetic equivalent records rather than the
+private device capture, and additionally verify current 32-bit Counter values,
+mixed BI/AI/CC records, invalid headers and strict format inspection.
+
+Final validation: ABI 8 native compilation succeeded and **114 tests passed
+in 125.087 seconds**, including the ambiguous-zero-padding regression. The
+final DLL also decoded the real capture correctly in all 12 model/build
+combinations. All 60 mapping entries and 200 local documentation links were
+verified. The final EXE remains for the user to build.
+
 ## Numeric master alignment (2026-10-13)
 
 The numeric editing behavior was audited against WolfEye `master` at the same

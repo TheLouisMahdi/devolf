@@ -96,7 +96,12 @@ audit. See [compatibility and cleanup details](docs/UPSTREAM_SYNC.md#single-sour
 
 Event reception handles the 16-bit wire length independently of the company's
 5 KiB outgoing limit, including 5,512-byte responses. Serialized BI/AI/Counter
-streams and legacy rings share the company point map. Interrupted downloads
+streams and legacy rings share the company point map. Event record sizes come
+from the pinned BeachEye schema; complete-stream validation also recognizes
+deployed short Counter records caused by the older company serializer. Layout
+selection does not depend on a fixed response size, device model or build.
+Both 16-bit and 32-bit transmitted Counter values retain their width.
+Interrupted downloads
 retry twice; invalid responses are saved with device metadata under
 `%LOCALAPPDATA%\DEVolf\diagnostics\events-response.bin` and `.json`.
 See [event verification and remaining limits](docs/UPSTREAM_SYNC.md#event-reception-correction).

@@ -92,7 +92,7 @@ def _native() -> ct.CDLL:
         library = ct.CDLL(str(path))
         library.be_abi_version.argtypes = []
         library.be_abi_version.restype = ct.c_uint32
-        if library.be_abi_version() != 7:
+        if library.be_abi_version() != 8:
             raise ValueError(
                 "Unsupported BeachEye bridge ABI; rebuild wolfeye_beacheye.dll"
             )
@@ -421,7 +421,8 @@ def _decode_measurements_by_wire_schema(payload: bytes) -> MeasurementSnapshot:
 def decode_events(
     payload: bytes, model: str = "", build: int = 0, *, format_hint: str = "auto"
 ) -> list[EventRecord]:
-    formats = {"auto": 0, "serialized": 1, "ring": 2}
+    formats = {"auto": 0, "serialized": 1, "ring": 2,
+               "serialized32": 3, "serialized16": 4}
     if format_hint not in formats:
         raise ValueError(f"Unsupported event format: {format_hint}")
     events = (_NamedEvent * max(1, len(payload) // 8))()
@@ -465,6 +466,7 @@ def decode_events(
                 category,
                 _native_name(event.name, event.type, event.source_index),
                 ("ON" if event.value else "OFF") if binary else str(event.value),
+                int(event.reserved),
             )
         )
     if count and not records and invalid_timestamps:

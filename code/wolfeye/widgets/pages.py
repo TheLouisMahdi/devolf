@@ -999,6 +999,8 @@ class EventsPage(QWidget):
                 )
             ):
                 self.table.setItem(row, col, QTableWidgetItem(value))
+            if record.kind == "Counter" and record.value_bits == 16:
+                self.table.item(row, 3).setToolTip("Device supplied a 16-bit counter value.")
         self._filter(self.filter.text())
 
     def _filter(self, text: str) -> None:

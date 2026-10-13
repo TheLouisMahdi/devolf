@@ -190,6 +190,81 @@ bool looks_like_event_ring(const uint8_t* data, size_t size) {
     return true;
 }
 
+struct EventStreamLayout {
+    bool valid;
+    size_t consumed;
+};
+
+size_t event_wire_size(uint32_t type, bool short_counter) {
+    // Use the pinned company's schema, not packet length or INFO build.
+    // Older company Event::SerializeSize returned the AI size for CC too,
+    // overwriting CC's upper word with the next event during serialization.
+    const auto wire_type = short_counter && type == 2 ? 1 : type;
+    BeachWolf::Event schema(0, 0, static_cast<BeachWolf::EventLogType>(wire_type), 0);
+    return schema.SerializeSize();
+}
+
+EventStreamLayout inspect_event_stream(const uint8_t* data, size_t size, bool short_counter) {
+    const size_t base = event_wire_size(0, false);
+    if (size && size < base) return {false, 0};
+    size_t offset = 0;
+    while (size - offset >= base) {
+        const auto header = little(data + offset, 2);
+        const auto type = (header >> 12) & 3;
+        // Header() uses 12 position bits, 2 type bits and a BI-only value bit.
+        if (type > 2 || (header & 0x8000) || (type != 0 && (header & 0x4000))) {
+            return {false, offset};
+        }
+        const size_t length = event_wire_size(type, short_counter);
+        if (size - offset < length) return {false, offset};
+        offset += length;
+    }
+    return {true, offset};  // Preserve the company's short trailing-byte tolerance.
+}
+
+int decode_company_event_stream(
+    const uint8_t* data, size_t size, BEEvent* out, size_t capacity, uint32_t format
+) {
+    if (!data || !out) return -1;
+    const auto modern = inspect_event_stream(data, size, false);
+    const auto deployed = inspect_event_stream(data, size, true);
+    bool short_counter = format == 4;
+    if (format == 3) {
+        if (!modern.valid) return -1;
+    } else if (format == 4) {
+        if (!deployed.valid) return -1;
+    } else {
+        if (!modern.valid && !deployed.valid) return -1;
+        // Prefer complete record boundaries over a partial trailing record.
+        // An alternative consuming only current zero padding as extra empty
+        // BI records is not evidence that a valid CC32 value was short.
+        const bool current_zero_padding = modern.valid && std::all_of(
+            data + modern.consumed, data + size, [](uint8_t byte) { return byte == 0; });
+        short_counter = deployed.valid && (!modern.valid ||
+            (deployed.consumed > modern.consumed && !current_zero_padding));
+    }
+    const size_t end = short_counter ? deployed.consumed : modern.consumed;
+    size_t offset = 0, used = 0;
+    while (offset < end) {
+        if (used >= capacity || used >= INT32_MAX) return -1;
+        const auto type = (little(data + offset, 2) >> 12) & 3;
+        const size_t wire_size = event_wire_size(type, short_counter);
+        const size_t company_size = event_wire_size(type, false);
+        std::vector<uint8_t> record(company_size, 0);
+        std::memcpy(record.data(), data + offset, wire_size);
+        // Zero-extend only the bits actually sent by old firmware. Names,
+        // header, timestamp and value decoding still come from BeachEye.
+        BeachWolf::Event event;
+        ser4cpp::rseq_t sequence(record.data(), record.size());
+        event.Deserialize(sequence);
+        const uint32_t value_bits = type == 0 ? 1 : type == 1 || short_counter ? 16 : 32;
+        out[used++] = {event.Time(), static_cast<uint32_t>(event.Type()),
+                      event.Position(), *event.Ptr(), value_bits};
+        offset += wire_size;
+    }
+    return static_cast<int>(used);
+}
+
 const char* event_name(uint32_t type, uint32_t index, uint32_t model, uint32_t build) {
     static thread_local BIs binaries;
     static thread_local auto settings = std::make_shared<Settings>();
@@ -459,7 +534,7 @@ int copy_settings_json(const std::shared_ptr<Settings>& settings, char* out, siz
 }
 }
 
-uint32_t __cdecl be_abi_version(void) { return 7; }
+uint32_t __cdecl be_abi_version(void) { return 8; }
 
 int __cdecl be_info(const uint8_t* data, size_t size, BEInfo* out) {
     if (!data || !out || size < 16) return -1;
@@ -524,42 +599,20 @@ int __cdecl be_measurements_named(
 }
 
 int __cdecl be_events(const uint8_t* data, size_t size, BEEvent* out, size_t capacity) {
-    if (!data || !out) return -1;
-    if (size && size < 8) return -1;
-    size_t offset = 0, used = 0;
-    // Keep DataProvider::EventsDeserialize's tolerance for the device's short
-    // trailing bytes, while retaining support for one final 8-byte BI record.
-    while (offset + 8 <= size) {
-        if (used >= capacity || used >= INT32_MAX) return -1;
-        const auto type = (little(data + offset, 2) >> 12) & 3;
-        const size_t length = type == 0 ? 8 : type == 1 ? 10 : type == 2 ? 12 : 0;
-        if (!length) return -1;
-        if (size - offset < length) return -1;
-        uint8_t record[12]{};
-        std::memcpy(record, data + offset, length);
-        BeachWolf::Event event;
-        ser4cpp::rseq_t sequence(record, length);
-        event.Deserialize(sequence);
-        out[used++] = {
-            event.Time(), static_cast<uint32_t>(event.Type()), event.Position(),
-            *event.Ptr(), 0
-        };
-        offset += event.SerializeSize();
-    }
-    return static_cast<int>(used);
+    return decode_company_event_stream(data, size, out, capacity, 0);
 }
 
 int __cdecl be_events_named(
     const uint8_t* data, size_t size, uint32_t model, uint32_t build, uint32_t format,
     BENamedEvent* out, size_t capacity
 ) {
-    if (!data || !out || format > 2) return -1;
+    if (!data || !out || format > 4) return -1;
     // Some FC22 firmware generations report a new/unknown build while still
     // downloading the raw Events struct.  Detect its strict 8-byte header and
     // 16-byte slot layout instead of trusting the INFO revision alone.
     const bool ring = looks_like_event_ring(data, size);
     if (format == 2 && !ring) return -1;
-    if (format != 1 && ring) {
+    if ((format == 0 || format == 2) && ring) {
         const size_t slots = (size - 8) / 16;
         const size_t next = little(data, 2);
         const bool wrapped = data[2] != 0;
@@ -574,7 +627,7 @@ int __cdecl be_events_named(
                 record[14],
                 static_cast<uint32_t>(little(record + 12, 2)),
                 little(record + 8, 4),
-                0,
+                record[14] == 0 ? 1u : record[14] == 1 ? 16u : 32u,
                 {}
             };
             const char* name = event_name(target.type, target.source_index, model, build);
@@ -589,12 +642,12 @@ int __cdecl be_events_named(
         return static_cast<int>(count);
     }
     std::vector<BEEvent> decoded(std::max<size_t>(1, size / 8));
-    const int count = be_events(data, size, decoded.data(), decoded.size());
+    const int count = decode_company_event_stream(data, size, decoded.data(), decoded.size(), format);
     if (count < 0 || static_cast<size_t>(count) > capacity) return -1;
     for (int i = 0; i < count; ++i) {
         const auto& source = decoded[i];
         auto& target = out[i];
-        target = {source.time_ms, source.type, source.index, source.value, 0, {}};
+        target = {source.time_ms, source.type, source.index, source.value, source.reserved, {}};
         const char* name = event_name(source.type, source.index, model, build);
         if (name) copy_name(target, name);
         else {

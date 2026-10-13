@@ -64,6 +64,19 @@ repository's nested legacy layouts and keeps one canonical application source.
   Tests use synthetic responses; the original physical-device response has
   not yet been captured. See [event verification details](UPSTREAM_SYNC.md#event-reception-correction).
 
+## Real-device Counter compatibility (2026-10-13)
+
+- Actual AR51 capture (5,112 bytes) now decodes to 627 visible events, including
+  all four Counters. Company history confirms the older serializer advanced
+  by 10 bytes for a 12-byte Counter, leaving only its low 16 bits in the stream.
+- Event wire sizes come from the pinned company API. The complete stream is
+  validated before selecting CC16/CC32; packet size, INFO model and build do
+  not choose its layout. Current 32-bit values stay intact and transmitted
+  widths are retained. Short Counter values are identified in viewer tooltips.
+- ABI 8 requires a native/application rebuild. The real capture passed both
+  models and native/chunked service paths. Source selection remains the same
+  pinned `ver_50_remaster`; no alternate dependency branch or DLL was added.
+
 ## Differences from `wolfeye`
 
 | Area | `wolfeye` branch | This branch |

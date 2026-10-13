@@ -65,9 +65,10 @@ class StatusPageTests(unittest.TestCase):
         page.filter.setText("Counter")
         page.set_events([EventRecord(timestamp, "Binary", "DI 1", "ON")])
         self.assertTrue(page.table.isRowHidden(0))
-        page.set_events([EventRecord(timestamp, "Counter", "Trip Count", "42")])
+        page.set_events([EventRecord(timestamp, "Counter", "Trip Count", "42", 16)])
         self.assertFalse(page.table.isRowHidden(0))
         self.assertTrue(page.table.item(0, 0).text().endswith(".123"))
+        self.assertIn("16-bit", page.table.item(0, 3).toolTip())
 
 
 if __name__ == "__main__":

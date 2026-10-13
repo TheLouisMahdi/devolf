@@ -41,3 +41,4 @@ class EventRecord:
     kind: str
     point: str
     value: str
+    value_bits: int = 0

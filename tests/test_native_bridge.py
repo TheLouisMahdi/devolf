@@ -41,11 +41,12 @@ class NativeBridgeTests(unittest.TestCase):
     def test_old_event_bridge_abi_requires_rebuild_before_calling_changed_api(self) -> None:
         beacheye._native.cache_clear()
         try:
-            with patch.object(beacheye.ct, "CDLL") as loader:
-                loader.return_value.be_abi_version.return_value = 6
-                with self.assertRaisesRegex(ValueError, "rebuild"):
-                    beacheye._native()
-                loader.return_value.be_events_named.assert_not_called()
+            for version in (6, 7):
+                with patch.object(beacheye.ct, "CDLL") as loader:
+                    loader.return_value.be_abi_version.return_value = version
+                    with self.assertRaisesRegex(ValueError, "rebuild"):
+                        beacheye._native()
+                    loader.return_value.be_events_named.assert_not_called()
         finally:
             beacheye._native.cache_clear()
 
@@ -497,7 +498,62 @@ class NativeBridgeTests(unittest.TestCase):
             for size in range(8, length):
                 payload = struct.pack("<H", kind << 12) + (12_600_000).to_bytes(6, "little") + bytes(size - 8)
                 with self.subTest(kind=kind, size=size), self.assertRaises(ValueError):
-                    decode_events(payload, "FC22AR", 51, format_hint="serialized")
+                    decode_events(payload, "FC22AR", 51, format_hint="serialized32")
+
+    def test_deployed_short_counter_stream_matches_real_failure_shape(self) -> None:
+        # Synthetic equivalent of the device capture: 634 BI + 4 short CC,
+        # 5112 bytes and 11 unused timestamps. No private device bytes stored.
+        positions = {77: 8, 119: 7, 300: 3, 430: 2}
+        zero_slots = set(range(5, 16))
+        records = []
+        expected = []
+        for index in range(638):
+            counter = index in positions
+            header = 0x2012 if counter else index % 300 | (0x4000 if index % 2 else 0)
+            timestamp = 0 if index in zero_slots else 12_600_000 + index * 1000
+            record = struct.pack("<H", header) + timestamp.to_bytes(6, "little")
+            if counter:
+                record += struct.pack("<H", positions[index])
+            records.append(record)
+            if timestamp:
+                expected.append(("Counter" if counter else "Binary",
+                                 str(positions[index]) if counter else "ON" if index % 2 else "OFF",
+                                 16 if counter else 1))
+        payload = b"".join(records)
+        self.assertEqual(len(payload), 5112)
+        for model in ("FC22AR", "FC22S"):
+            for build in (0, 50, 51, 52, 256, 65535):
+                for hint in ("auto", "serialized", "serialized16"):
+                    with self.subTest(model=model, build=build, hint=hint):
+                        events = decode_events(payload, model, build, format_hint=hint)
+                        self.assertEqual(len(events), 627)
+                        self.assertEqual([(e.kind, e.value, e.value_bits) for e in events], expected)
+        with self.assertRaises(ValueError):
+            decode_events(payload, "FC22AR", 51, format_hint="serialized32")
+
+    def test_counter_layout_detection_uses_whole_stream_and_preserves_32_bits(self) -> None:
+        bi = struct.pack("<H", 0x405F) + (12_600_000).to_bytes(6, "little")
+        ai = struct.pack("<H", 0x1003) + (12_601_000).to_bytes(6, "little") + struct.pack("<H", 32768)
+        cc_header = struct.pack("<H", 0x2012) + (12_602_000).to_bytes(6, "little")
+        for value in (0, 8, 65535):
+            payload = bi + ai + cc_header + struct.pack("<H", value) + bi
+            events = decode_events(payload, "FC22S", 51)
+            self.assertEqual([e.kind for e in events], ["Binary", "Analog", "Counter", "Binary"])
+            self.assertEqual((events[2].value, events[2].value_bits), (str(value), 16))
+        for value in (0, 65535, 65536, 0x89ABCDEF, 0xFFFFFFFF):
+            payload = bi + ai + cc_header + struct.pack("<I", value) + bi
+            events = decode_events(payload, "FC22AR", 51)
+            self.assertEqual([e.kind for e in events], ["Binary", "Analog", "Counter", "Binary"])
+            self.assertEqual((events[2].value, events[2].value_bits), (str(value), 32))
+        ambiguous = cc_header + bytes(4 + 8 + 6)
+        # The alternative can consume current BI padding as more records;
+        # that is not evidence that a valid current Counter has only 16 bits.
+        event = decode_events(ambiguous, "FC22AR", 51)[0]
+        self.assertEqual((event.value, event.value_bits), ("0", 32))
+        for kind in (1, 2, 3):
+            invalid = struct.pack("<H", (kind << 12) | 0x4000) + bytes(10)
+            with self.subTest(invalid_kind=kind), self.assertRaises(ValueError):
+                decode_events(invalid, "FC22AR", 51)
 
     def test_provider_receives_large_fragmented_events_with_crc_and_sequence_checks(self) -> None:
         # The reported 5512-byte failure is reproduced through the socket,

@@ -702,7 +702,7 @@ class DeviceService(QObject):
                 "captured_at": datetime.now(timezone.utc).isoformat(),
                 "model": self.info.model, "build": self.info.build,
                 "firmware": self.info.firmware, "hardware": self.info.hardware,
-                "bootloader": self.info.bootloader, "bridge_abi": 7,
+                "bootloader": self.info.bootloader, "bridge_abi": 8,
                 "transport": self.info.transport, "command": command,
                 "frame_type": frame_type, "size": len(data), "error": error,
                 "expected_chunk": self._event_sequence,
