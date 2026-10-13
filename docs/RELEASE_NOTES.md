@@ -7,7 +7,7 @@ repository's nested legacy layouts and keeps one canonical application source.
 ## Product features
 
 - Synced with company WolfEye `master` at `989f9ff` and pinned BeachEye
-  `ver_50_remaster` at `110dd0c`; see `UPSTREAM_SYNC.md` for the commit map.
+  `ver_50_remaster` at `110dd0c`; see [the synchronization manifest](UPSTREAM_SYNC.md) for the commit map.
 - User-facing product identity and the default executable name are `DEVolf`;
   compatibility-facing WolfEye/BeachEye package, DLL, and schema names remain
   unchanged.

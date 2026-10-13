@@ -28,6 +28,8 @@ from wolfeye.qt import (
 
 from wolfeye.config_schema import AR_MODES, BAUD_RATES, BINARY_POINT_NAMES, TCC_TYPES
 from wolfeye.services.beacheye import settings_point_catalog
+from wolfeye.numeric_schema import numeric_spec
+from wolfeye.widgets.numeric_editor import configure_numeric_editor, numeric_value, set_numeric_value
 from wolfeye.widgets.tcc_chart import TccChartDialog
 
 
@@ -91,6 +93,7 @@ class _BoundPage(QWidget):
 
     def _bind(self, path: str, widget: QWidget) -> QWidget:
         if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+            configure_numeric_editor(widget, path)
             widget.setMinimumWidth(116)
         self._bindings.setdefault(path, []).append(widget)
         if isinstance(widget, QCheckBox):
@@ -120,7 +123,7 @@ class _BoundPage(QWidget):
                 return widget.currentData()
             return widget.currentText()
         if isinstance(widget, (QDoubleSpinBox, QSpinBox)):
-            return widget.value()
+            return numeric_value(widget)
         if isinstance(widget, QLineEdit):
             return widget.text()
         raise TypeError(f"Unsupported bound widget: {type(widget).__name__}")
@@ -141,9 +144,9 @@ class _BoundPage(QWidget):
                 else:
                     widget.setCurrentText(str(value))
             elif isinstance(widget, QDoubleSpinBox):
-                widget.setValue(float(value))
+                set_numeric_value(widget, float(value))
             elif isinstance(widget, QSpinBox):
-                widget.setValue(int(value))
+                set_numeric_value(widget, int(value))
             elif isinstance(widget, QLineEdit):
                 widget.setText(str(value))
         finally:
@@ -169,8 +172,10 @@ class _BoundPage(QWidget):
         minimum: int = 0,
         maximum: int = 65535,
         suffix: str = "",
-    ) -> QSpinBox:
-        widget = QSpinBox()
+    ) -> QSpinBox | QDoubleSpinBox:
+        spec = numeric_spec(path)
+        # Qt's QSpinBox is signed int32; uint32 needs a zero-decimal double.
+        widget = QDoubleSpinBox() if spec and spec.maximum > 2**31 - 1 else QSpinBox()
         widget.setRange(minimum, maximum)
         widget.setSuffix(suffix)
         self._bind(path, widget)
@@ -337,7 +342,7 @@ class GeneralPage(_BoundPage):
             form, "Source Side", "general.measurement.source_side", ("ABC", "RST")
         )
         self.add_combo(
-            form, "Phase Rotation", "general.measurement.phase_rotation", ("ABC", "ACB")
+            form, "Phase Rotation", "general.measurement.phase_rotation", ("ABC", "ACB", "BCA", "CAB", "BAC", "CBA")
         )
         self.add_float(form, "LSD Level", "general.system.lsd_level", 0.5, 6.0, 1)
         grid.addWidget(box, 0, 0)
@@ -356,7 +361,7 @@ class GeneralPage(_BoundPage):
 
         box, form = self._section("Deadbands")
         specs = (
-            ("Voltages", "voltages_v", "float", 0.1, 65.0, " V"),
+            ("Voltages", "voltages_v", "float", 0.1, 65.0, " kV"),
             ("Phase Currents", "phase_currents_a", "int", 1, 99, " A"),
             ("Residual Currents", "residual_currents_a", "int", 1, 99, " A"),
             ("Battery Voltage", "battery_voltage_v", "float", 1.0, 10.0, " V"),
@@ -420,7 +425,9 @@ class GeneralPage(_BoundPage):
         self.add_bool(form, "Enable Unsolicited", f"{p}.enabled")
         for number in range(1, 4):
             self.add_bool(form, f"Enable Class {number}", f"{p}.class_{number}")
-        self.add_int(form, "Max Event Buffer", f"{p}.max_event_buffer", 1, 99)
+        unused_buffer = self.add_int(form, "Max Event Buffer", f"{p}.max_event_buffer", 1, 99)
+        unused_buffer.setEnabled(False)
+        unused_buffer.setToolTip("Not used or serialized by the company settings ABI.")
         self.add_int(form, "Hold Time", f"{p}.hold_time_s", 0, 10, " s")
         grid.addWidget(box, 1, 0)
 

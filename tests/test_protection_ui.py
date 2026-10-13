@@ -24,6 +24,7 @@ from wolfeye.qt import (  # noqa: E402
 )
 
 from wolfeye.config_schema import default_config  # noqa: E402
+from wolfeye.numeric_schema import TIME  # noqa: E402
 from wolfeye.services.beacheye import (  # noqa: E402
     decode_settings_payload,
     default_settings_file,
@@ -254,7 +255,7 @@ class ProtectionMenuTests(unittest.TestCase):
         self.assertTrue(self.page._bindings[f"{base}.pickup_a"][0].isEnabled())
         self.assertTrue(self.page._bindings[f"{base}.tripping_time_s"][0].isEnabled())
         self.assertEqual(
-            self.page._bindings[f"{base}.tripping_time_s"][0].maximum(), 2
+            self.page._bindings[f"{base}.tripping_time_s"][0].maximum(), TIME.maximum
         )
         self.assertFalse(self.page._bindings[f"{base}.time_multiplier"][0].isEnabled())
         reset = self.page._bindings[f"{base}.reset_time_s"][0]
@@ -270,7 +271,7 @@ class ProtectionMenuTests(unittest.TestCase):
 
         curve.setCurrentText("TD")
         self.assertTrue(reset.isEnabled())
-        self.assertEqual(reset.maximum(), 2)
+        self.assertEqual(reset.maximum(), TIME.maximum)
         self.assertEqual(
             reset.buttonSymbols(), QAbstractSpinBox.ButtonSymbols.UpDownArrows
         )
@@ -294,8 +295,8 @@ class ProtectionMenuTests(unittest.TestCase):
             widget = self.page._bindings[
                 f"protection.groups.0.master.over_voltage.{key}.multiplier"
             ][0]
-            self.assertEqual(widget.minimum(), 1.0)
-            self.assertEqual(widget.maximum(), 1.5)
+            self.assertEqual(widget.minimum(), 0.0)
+            self.assertEqual(widget.maximum(), 42949672.95 if key == "ov1" else 2.55)
 
     def test_all_auto_recloser_tcc_editors_stay_inside_their_columns(self) -> None:
         page = ProtectionPage()
@@ -409,12 +410,12 @@ class GeneralFunctionMenuTests(unittest.TestCase):
             "general.system.synchronization.fundamental_frequency_hz"
         ][0]
 
-        self.assertEqual((validation.minimum(), validation.maximum()), (0.002, 0.128))
-        self.assertEqual(analog_value.maximum(), 9_999_999)
+        self.assertEqual((validation.minimum(), validation.maximum()), (0, 0.255))
+        self.assertEqual(analog_value.maximum(), 4_294_967_295)
         self.assertIsInstance(phase_angle, QSpinBox)
-        self.assertEqual((phase_angle.minimum(), phase_angle.maximum()), (0, 90))
+        self.assertEqual((phase_angle.minimum(), phase_angle.maximum()), (0, 255))
         self.assertIsInstance(fundamental, QSpinBox)
-        self.assertEqual((fundamental.minimum(), fundamental.maximum()), (47, 64))
+        self.assertEqual((fundamental.minimum(), fundamental.maximum()), (0, 255))
         for transport in ("ethernet", "modem"):
             for port in ("local_port", "remote_port"):
                 widget = page._bindings[

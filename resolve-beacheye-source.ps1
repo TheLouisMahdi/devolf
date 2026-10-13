@@ -168,6 +168,22 @@ function Enable-DesktopCompatibility([string]$Path) {
         }
     }
 
+    # WolfEye master edits Configure directly with numeric validation disabled.
+    # The JSON export helper otherwise resets out-of-menu numeric values in
+    # Configure while merely reading them. Keep numeric export lossless in the
+    # desktop cache; enum validation and the firmware source remain unchanged.
+    $numericMacroPattern = '(?ms)^#define JSON_NUM_ASSERT_DEF\(.*?(?=^#define JSON_NUM_ADD\()'
+    if ([regex]::Matches($json, $numericMacroPattern).Count -ne 1) {
+        throw "The private BeachEye numeric JSON export layout is not recognized."
+    }
+    $numericMacro = "#define JSON_NUM_ASSERT_DEF(obj, value, attr, def) JSON_NUM_ASSERT(obj, value)" +
+        [Environment]::NewLine + [Environment]::NewLine
+    $losslessJson = [regex]::Replace($json, $numericMacroPattern, $numericMacro, 1)
+    if ($losslessJson -ne $json) {
+        $json = $losslessJson
+        $changed = $true
+    }
+
     if ($changed) {
         [IO.File]::WriteAllText($jsonPath, $json, [Text.UTF8Encoding]::new($false))
     }

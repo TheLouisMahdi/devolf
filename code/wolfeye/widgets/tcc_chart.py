@@ -29,6 +29,8 @@ from wolfeye.qt import (
 )
 
 from wolfeye.config_schema import TCC_TYPES
+from wolfeye.numeric_schema import TIME
+from wolfeye.widgets.numeric_editor import configure_numeric_editor, numeric_value, set_numeric_value
 
 
 # Constants copied from the company's TCCCalculator.cpp. Values returned by the
@@ -610,11 +612,23 @@ class TccChartDialog(QDialog):
         self.reset_time.setDecimals(2)
         self.reset_time.setSuffix(" s")
         self.element_form.addRow("Reset time", self.reset_time)
+        for control, field in (
+            (self.pickup, "pickup_a"),
+            (self.time_multiplier, "time_multiplier"),
+            (self.element_min_current, "min_current_multiplier"),
+            (self.element_max_current, "max_current_multiplier"),
+            (self.element_min_time, "definite_min_time_s"),
+            (self.trip_time, "tripping_time_s"),
+            (self.max_trip_time, "max_tripping_time_s"),
+            (self.time_adder, "time_adder_s"),
+            (self.reset_time, "reset_time_s"),
+        ):
+            configure_numeric_editor(control, f"protection.groups.0.oc.elements.0.{field}")
         side_layout.addLayout(self.element_form)
 
         controls = QFormLayout()
         self.test_point = QSpinBox()
-        self.test_point.setRange(1, 65535)
+        self.test_point.setRange(0, 65535)
         self.test_point.setValue(int(view_settings.get("test_point_a", 100)))
         self.test_point.setSuffix(" A")
         controls.addRow("Test point", self.test_point)
@@ -638,13 +652,13 @@ class TccChartDialog(QDialog):
         controls.addRow("Current scale", self.current_scale)
 
         self.view_min_time = QDoubleSpinBox()
-        self.view_min_time.setRange(0.001, 9998.0)
+        self.view_min_time.setRange(0.001, TIME.maximum - 0.001)
         self.view_min_time.setDecimals(3)
         self.view_min_time.setValue(float(view_settings.get("min_time_s", 0.01)))
         self.view_min_time.setSuffix(" s")
         controls.addRow("Min. time", self.view_min_time)
         self.view_max_time = QDoubleSpinBox()
-        self.view_max_time.setRange(0.002, 9999.0)
+        self.view_max_time.setRange(0.002, TIME.maximum)
         self.view_max_time.setDecimals(3)
         self.view_max_time.setValue(float(view_settings.get("max_time_s", 120.0)))
         self.view_max_time.setSuffix(" s")
@@ -723,7 +737,7 @@ class TccChartDialog(QDialog):
             if isinstance(widget, QComboBox):
                 widget.setCurrentText(str(value))
             elif isinstance(widget, (QDoubleSpinBox, QSpinBox)):
-                widget.setValue(value)
+                set_numeric_value(widget, value)
         finally:
             widget.blockSignals(blocked)
 
@@ -796,13 +810,6 @@ class TccChartDialog(QDialog):
 
         highset = len(self._elements) > 2 and (selected + 1) % 3 == 0
         if self._is_sef:
-            self.pickup.setRange(1, 80)
-        elif highset:
-            self.pickup.setRange(20, 6000)
-        else:
-            self.pickup.setRange(10, 1280)
-        self.trip_time.setRange(0.0, 2.0 if highset else 120.0)
-        if self._is_sef:
             self._set_form_row_visible(self.curve_type, False)
             self._set_form_row_visible(self.pickup, True)
             for widget in (
@@ -852,16 +859,16 @@ class TccChartDialog(QDialog):
         element = self._elements[selected]
         element.update(
             type=self.curve_type.currentText(),
-            pickup_a=self.pickup.value(),
-            time_multiplier=self.time_multiplier.value(),
-            min_current_multiplier=self.element_min_current.value(),
+            pickup_a=numeric_value(self.pickup),
+            time_multiplier=numeric_value(self.time_multiplier),
+            min_current_multiplier=numeric_value(self.element_min_current),
             max_mode=self.max_mode.isChecked(),
-            max_current_multiplier=self.element_max_current.value(),
-            definite_min_time_s=self.element_min_time.value(),
-            tripping_time_s=self.trip_time.value(),
-            max_tripping_time_s=self.max_trip_time.value(),
-            time_adder_s=self.time_adder.value(),
-            reset_time_s=self.reset_time.value(),
+            max_current_multiplier=numeric_value(self.element_max_current),
+            definite_min_time_s=numeric_value(self.element_min_time),
+            tripping_time_s=numeric_value(self.trip_time),
+            max_tripping_time_s=numeric_value(self.max_trip_time),
+            time_adder_s=numeric_value(self.time_adder),
+            reset_time_s=numeric_value(self.reset_time),
         )
         self._update_editor_visibility()
         self._refresh()

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from wolfeye.config_schema import AR_MODES, BAUD_RATES, TCC_TYPES
+from wolfeye.numeric_schema import validate_numeric_config
 
 
 _BOOL = (False, True)
@@ -233,6 +234,7 @@ def update_native_from_config(native: dict[str, Any], config: dict[str, Any]) ->
     """Apply the existing UI model to the company's Settings JSON in place."""
     if "legacy_payload_hex" in native:
         return
+    validate_numeric_config(config)
     general = config["general"]
     measurement = general["measurement"]
     system = native["sy"]
@@ -789,7 +791,7 @@ def _read_extensions(target: dict[str, Any], source: dict[str, Any]) -> None:
             break
         raw = source["ov"][index]
         over_voltage[name].update(multiplier=float(raw["u"]) / 100, trip_s=_ms(raw["t"]), ar_mode=_choice(AR_MODES, raw["a"]))
-    over_voltage["ov3"].update(moving_average_mode=_choice(("DISABLE", "ENABLE"), source["ov"][2]["mam"]), moving_average_window=round(_ms(source["ov"][2]["maw"])))
+    over_voltage["ov3"].update(moving_average_mode=_choice(("DISABLE", "ENABLE"), source["ov"][2]["mam"]), moving_average_window=_ms(source["ov"][2]["maw"]))
     ar_voltage = master["ar_voltage"]
     ar_voltage.update(reclose_s=_ms(source["uv"]["r"]), trip_count=int(source["uv"]["f"][2]), sst_only=bool(source["uv"]["f"][1]), auto_close=bool(source["uv"]["f"][0]), auto_close_s=_ms(source["uv"]["c"]))
     for index, name in enumerate(("uv1", "uv2", "uv3", "uv12", "uv13", "uv22", "uv23")):

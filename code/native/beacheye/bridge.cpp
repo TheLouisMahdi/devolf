@@ -339,6 +339,20 @@ bool add_settings_extensions(cJSON* root, const Configure& config) {
         add_fast_trip_max_mode(group, "e", config.prot.groups[index].ocef.ef);
         add_fast_trip_max_mode(group, "nps", config.nps[index]);
 
+        // The company array helper views these signed words as uint16_t.
+        // Export their actual signed values after lossless numeric conversion.
+        cJSON* admittance = cJSON_GetObjectItemCaseSensitive(group, "ad");
+        cJSON* conductance = cJSON_GetObjectItemCaseSensitive(admittance, "c");
+        const auto& adm = config.admittance[index];
+        const int16_t signed_values[] = {
+            adm.forward_susceptance, adm.reverse_susceptance,
+            adm.forward_conductance, adm.reverse_conductance,
+        };
+        for (int field = 0; field < 4; ++field) {
+            cJSON* number = cJSON_GetArrayItem(conductance, field + 1);
+            if (cJSON_IsNumber(number)) cJSON_SetNumberValue(number, signed_values[field]);
+        }
+
 #ifdef BE_HAS_C_MAX
         cJSON* maximums = cJSON_CreateArray();
         if (!maximums) return false;
@@ -413,12 +427,12 @@ void apply_settings_extensions(cJSON* root, Configure& config) {
         cJSON* maximums = cJSON_GetObjectItemCaseSensitive(group, "cm");
         if (cJSON_IsArray(maximums) && cJSON_GetArraySize(maximums) >= 6) {
             auto& values = config.c_max[index];
-            values.oc2_f = number_value(cJSON_GetArrayItem(maximums, 0), values.oc2_f, 1000);
-            values.oc2_r = number_value(cJSON_GetArrayItem(maximums, 1), values.oc2_r, 1000);
-            values.ef2_f = number_value(cJSON_GetArrayItem(maximums, 2), values.ef2_f, 1000);
-            values.ef2_r = number_value(cJSON_GetArrayItem(maximums, 3), values.ef2_r, 1000);
-            values.nps2_f = number_value(cJSON_GetArrayItem(maximums, 4), values.nps2_f, 1000);
-            values.nps2_r = number_value(cJSON_GetArrayItem(maximums, 5), values.nps2_r, 1000);
+            values.oc2_f = number_value(cJSON_GetArrayItem(maximums, 0), values.oc2_f, UINT16_MAX);
+            values.oc2_r = number_value(cJSON_GetArrayItem(maximums, 1), values.oc2_r, UINT16_MAX);
+            values.ef2_f = number_value(cJSON_GetArrayItem(maximums, 2), values.ef2_f, UINT16_MAX);
+            values.ef2_r = number_value(cJSON_GetArrayItem(maximums, 3), values.ef2_r, UINT16_MAX);
+            values.nps2_f = number_value(cJSON_GetArrayItem(maximums, 4), values.nps2_f, UINT16_MAX);
+            values.nps2_r = number_value(cJSON_GetArrayItem(maximums, 5), values.nps2_r, UINT16_MAX);
         }
 #endif
     }
