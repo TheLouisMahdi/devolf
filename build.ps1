@@ -27,6 +27,7 @@ else {
 }
 $entryPoint = Join-Path $projectRoot "code\main.py"
 $assets = Join-Path $projectRoot "code\assets"
+$testLots = Join-Path $projectRoot "code\test_lots"
 $icon = Join-Path $assets "wolfeye.ico"
 $nativeDirectory = Join-Path $projectRoot "code\native\beacheye"
 $nativeDll = Join-Path $nativeDirectory "wolfeye_beacheye.dll"
@@ -169,6 +170,7 @@ raise SystemExit(0 if result.wasSuccessful() else 1)
         "--specpath", $work,
         "--icon", $icon,
         "--add-data", "$assets;assets",
+        "--add-data", "$testLots;test_lots",
         "--add-binary", "$nativeDll;native/beacheye"
     )
     $arguments += $entryPoint

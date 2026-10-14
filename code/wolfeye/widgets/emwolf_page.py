@@ -58,6 +58,7 @@ from wolfeye.services.emwolf_protocol import (
     save_project,
 )
 from wolfeye.services.emwolf_report import EmWolfRunReport, generate_emwolf_pdf
+from wolfeye.services.fc22_input_adapters import emwolf_scenario_values
 
 
 class _ConnectionBridge(QObject):
@@ -135,6 +136,8 @@ class EmWolfPage(QWidget):
 
     log_line = Signal(str)
     log_window_requested = Signal()
+    test_run_started = Signal(str)
+    test_result = Signal(str, object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -701,6 +704,10 @@ class EmWolfPage(QWidget):
             return
         scenario = self.execution_report.project.scenarios[scenario_index]
         execution = self.execution_report.executions[scenario_index]
+        self.test_result.emit(
+            self.execution_report.project.device.model,
+            emwolf_scenario_values(scenario_index, execution),
+        )
         trip_time_us = execution.trip_time_us
         trip_input = execution.trip_input
         trip_value = execution.trip_value
@@ -956,6 +963,7 @@ class EmWolfPage(QWidget):
         try:
             self.execution_report = EmWolfRunReport.begin(self.project)
             self.connection.send_project(self.project)
+            self.test_run_started.emit(self.execution_report.project.device.model)
         except (ValueError, OSError, ConnectionError) as exc:
             self.execution_report = previous_report
             QMessageBox.critical(self, "Send failed", str(exc))

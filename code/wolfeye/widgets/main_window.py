@@ -422,6 +422,8 @@ class MainWindow(QMainWindow):
         self.tabs.currentChanged.connect(self._update_device_operations_visibility)
         self._update_device_operations_visibility(self.tabs.currentIndex())
         self.emwolf_page.log_line.connect(self.emwolf_log_view.appendPlainText)
+        self.emwolf_page.test_run_started.connect(self.fc22_tester_page.on_emwolf_run_started)
+        self.emwolf_page.test_result.connect(self.fc22_tester_page.on_emwolf_result)
         self.emwolf_page.log_window_requested.connect(self._show_emwolf_log_window)
         self.connect_btn.clicked.connect(self.toggle_connection)
         self.status_page.control_requested.connect(self.service.send_control)
@@ -515,6 +517,7 @@ class MainWindow(QMainWindow):
     def on_measurements(self, snapshot: MeasurementSnapshot) -> None:
         self.status_page.set_measurements(snapshot)
         self.measurement_page.update_snapshot(snapshot)
+        self.fc22_tester_page.on_measurements(snapshot)
         self.statusBar().showMessage(
             f"Measurements updated at {snapshot.timestamp:%H:%M:%S}"
         )

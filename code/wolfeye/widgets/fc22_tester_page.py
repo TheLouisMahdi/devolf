@@ -23,35 +23,54 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+import json
+import math
 import os
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 from wolfeye.branding import PRODUCT_NAME
 from wolfeye.qt import (
+    QAbstractItemView,
+    QApplication,
+    QCheckBox,
+    QColor,
+    QHeaderView,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QObject,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QPlainTextEdit,
     QScrollArea,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
     Qt,
+    QTimer,
     Signal,
 )
 
 from wolfeye.models import DeviceInfo
+from wolfeye.widgets.fc22_lot_editor import TestLotEditorDialog
+from wolfeye.services.fc22_input_adapters import BenchTcpAdapter, validate_bench_lot_source
 from wolfeye.services.fc22_form_pdf import fill_form
 from wolfeye.services.fc22_session import Fc22Session, Fc22SessionStore
+from wolfeye.services.fc22_test_lot import TestLotEngine, load_lot, validate_lot
 from wolfeye.services.windows_pdf_printer import print_pdf_to_default_printer
 
 RESULT_CHOICES = ("PASS", "FAIL", "UNKNOWN")
@@ -227,6 +246,11 @@ FORM_FIELDS: tuple[tuple[str, str, str], ...] = (
 REQUIRED_FORM_KEYS = tuple(key for key, _label, _kind in FORM_FIELDS)
 
 
+class _BenchBridge(QObject):
+    measurement = Signal(str, str, str, object, str)
+    error = Signal(str)
+
+
 class Fc22TesterPage(QWidget):
     """Native WolfEye FC22 Tester section (Setup → Form Data → Run Test → Report)."""
 
@@ -239,6 +263,22 @@ class Fc22TesterPage(QWidget):
         self.session: Fc22Session | None = None
         self.current_pdf: Path | None = None
         self._loading = False
+        self._lot_engine: TestLotEngine | None = None
+        self._lot_path: Path | None = None
+        self._latest_inputs: dict[str, dict[str, object]] = {}
+        self._input_updated: dict[str, float] = {}
+        self._input_samples: dict[str, int] = {}
+        self._input_sequence = 0
+        self._lot_table_rows: tuple[tuple[str, str], ...] = ()
+        self._emwolf_armed = False
+        self._manual_overrides: set[str] = set()
+        self._bench_bridge = _BenchBridge()
+        self._bench_bridge.measurement.connect(self._accept_bench_measurement)
+        self._bench_bridge.error.connect(self._bench_error)
+        self._bench_adapter = BenchTcpAdapter(
+            lambda *_args: None, self._bench_bridge.error.emit,
+            on_context_measurement=self._bench_bridge.measurement.emit,
+        )
 
         self.fields: dict[str, QWidget] = {}
         self.test_fields: dict[str, QWidget] = {}
@@ -246,6 +286,10 @@ class Fc22TesterPage(QWidget):
         self._build_ui()
         self._new_session()
         self._show_step(0)
+        self._lot_timer = QTimer(self)
+        self._lot_timer.setInterval(250)
+        self._lot_timer.timeout.connect(lambda: self._evaluate_lot({}))
+        self._lot_timer.start()
 
     # ------------------------------------------------------------- UI build
     def _build_ui(self) -> None:
@@ -366,6 +410,8 @@ class Fc22TesterPage(QWidget):
         note.setObjectName("muted")
         note.setWordWrap(True)
         layout.addWidget(dut_box)
+        layout.addWidget(self._build_lot_settings())
+        layout.addWidget(self._build_bench_settings())
         layout.addWidget(note)
         layout.addStretch()
 
@@ -374,6 +420,457 @@ class Fc22TesterPage(QWidget):
         continue_button.clicked.connect(lambda: self._show_step(1))
         layout.addWidget(continue_button, 0, Qt.AlignmentFlag.AlignRight)
         return page
+
+
+    def _build_lot_settings(self) -> QWidget:
+        """Compact test settings; the advanced editor exposes the full JSON."""
+        group = QGroupBox("Test Lot Configuration")
+        grid = QGridLayout(group)
+        self.lot_label = QLabel("No active test lot")
+        self.lot_label.setObjectName("muted")
+        load_button = QPushButton("Load JSON")
+        load_button.clicked.connect(self._load_lot_dialog)
+        edit_button = QPushButton("Edit JSON")
+        edit_button.clicked.connect(self._edit_lot_json)
+        save_button = QPushButton("Save JSON As")
+        save_button.clicked.connect(self._save_lot_json)
+        grid.addWidget(self.lot_label, 0, 0, 1, 2)
+        grid.addWidget(load_button, 0, 2)
+        grid.addWidget(edit_button, 0, 3)
+        grid.addWidget(save_button, 0, 4)
+
+        self.lot_test_combo = QComboBox()
+        self.lot_test_combo.currentIndexChanged.connect(self._lot_test_selected)
+        self.lot_expected = QLineEdit()
+        self.lot_expected.setPlaceholderText("Expected value")
+        self.lot_tolerance = QLineEdit()
+        self.lot_tolerance.setPlaceholderText("Absolute tolerance")
+        self.lot_stable = QCheckBox("Check stability (5 samples)")
+        self.lot_stable_spread = QLineEdit()
+        self.lot_stable_spread.setPlaceholderText("Max spread")
+        self.lot_stable.toggled.connect(self._lot_stability_toggled)
+        apply_button = QPushButton("Apply settings")
+        apply_button.clicked.connect(self._apply_lot_settings)
+        self.lot_apply_button = apply_button
+        grid.addWidget(QLabel("Test"), 1, 0)
+        grid.addWidget(self.lot_test_combo, 1, 1, 1, 2)
+        grid.addWidget(QLabel("Expected"), 2, 0)
+        grid.addWidget(self.lot_expected, 2, 1)
+        grid.addWidget(QLabel("Tolerance (+/-)"), 2, 2)
+        grid.addWidget(self.lot_tolerance, 2, 3)
+        grid.addWidget(self.lot_stable, 3, 1)
+        grid.addWidget(self.lot_stable_spread, 3, 2)
+        grid.addWidget(apply_button, 3, 3)
+
+        hint = QLabel("Full editor: create tests, choose inputs and combine acceptance filters.")
+        hint.setObjectName("muted")
+        hint.setWordWrap(True)
+        create_button = QPushButton("New Lot")
+        create_button.clicked.connect(lambda: self._configure_lot(new=True))
+        configure_button = QPushButton("Configure Filters...")
+        configure_button.setObjectName("primary")
+        configure_button.clicked.connect(self._configure_lot)
+        grid.addWidget(hint, 4, 0, 1, 2)
+        grid.addWidget(create_button, 4, 2)
+        grid.addWidget(configure_button, 4, 3, 1, 2)
+        self._refresh_lot_settings()
+        return group
+
+    def _build_bench_settings(self) -> QWidget:
+        group = QGroupBox("External Test Bench | JSON TCP")
+        grid = QGridLayout(group)
+        self.bench_host = QLineEdit("127.0.0.1")
+        self.bench_port = QLineEdit("6767")
+        self.bench_host.setToolTip("Loopback by default; LAN binding requires a trusted isolated network")
+        self.bench_token = QLineEdit()
+        self.bench_token.setReadOnly(True)
+        self.bench_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.bench_token.setPlaceholderText("Created when adapter starts")
+        copy_token = QPushButton("Copy token")
+        copy_token.clicked.connect(lambda: QApplication.clipboard().setText(self.bench_token.text()))
+        self.bench_status = QLabel("Stopped")
+        self.bench_status.setObjectName("muted")
+        self.bench_button = QPushButton("Start listener")
+        self.bench_button.clicked.connect(self._toggle_bench)
+        grid.addWidget(QLabel("Bind IP"), 0, 0)
+        grid.addWidget(self.bench_host, 0, 1)
+        grid.addWidget(QLabel("Port"), 0, 2)
+        grid.addWidget(self.bench_port, 0, 3)
+        grid.addWidget(self.bench_button, 0, 4)
+        grid.addWidget(QLabel("Session token"), 1, 0)
+        grid.addWidget(self.bench_token, 1, 1, 1, 2)
+        grid.addWidget(copy_token, 1, 3)
+        grid.addWidget(self.bench_status, 1, 4)
+        note = QLabel("Length-prefixed JSON. Only fields configured in the active lot are accepted. "
+                      "Use a trusted LAN for non-loopback binding; never expose this port to the Internet.")
+        note.setObjectName("muted")
+        note.setWordWrap(True)
+        grid.addWidget(note, 2, 0, 1, 5)
+        return group
+
+    def _toggle_bench(self) -> None:
+        if self._bench_adapter.running:
+            self._stop_bench()
+            return
+        if self.session is None or self._lot_engine is None:
+            QMessageBox.warning(self, "Test Bench", "Select a valid Test Lot before starting.")
+            return
+        try:
+            port = int(self.bench_port.text())
+            host = self.bench_host.text().strip()
+            actual_port = self._bench_adapter.start(self.session.session_id, host, port)
+        except (ValueError, OSError, RuntimeError) as exc:
+            QMessageBox.warning(self, "Test Bench", str(exc))
+            return
+        self.bench_token.setText(self._bench_adapter.token)
+        self.bench_port.setText(str(actual_port))
+        self.bench_status.setText(f"Listening on {host}:{actual_port}")
+        self.bench_button.setText("Stop listener")
+        self.bench_host.setEnabled(False)
+        self.bench_port.setEnabled(False)
+        self._lot_engine.reset_channel("external")
+        self._latest_inputs.pop("external", None)
+        self._evaluate_lot({})
+
+    def _stop_bench(self) -> None:
+        self._bench_adapter.stop()
+        self.bench_token.clear()
+        self.bench_status.setText("Stopped")
+        self.bench_button.setText("Start listener")
+        self.bench_host.setEnabled(True)
+        self.bench_port.setEnabled(True)
+
+    def _bench_error(self, message: str) -> None:
+        self.bench_status.setText(message)
+        self.log_line.emit(message)
+
+    def _accept_bench_measurement(self, session_id: str, token: str, field: str, value: object, unit: str) -> None:
+        if self.session is None or self._lot_engine is None or not self._bench_adapter.running:
+            return
+        if (session_id != self.session.session_id or token != self._bench_adapter.token
+                or self.session.dut_model != self._lot_engine.lot["device_model"]):
+            return
+        try:
+            validate_bench_lot_source(self._lot_engine.lot, field, unit)
+        except ValueError as exc:
+            self._bench_error(f"Bench input rejected: {exc}")
+            return
+        self._evaluate_lot({"external": {field: value}})
+
+    def on_emwolf_run_started(self, model: str) -> None:
+        self._emwolf_armed = bool(
+            self.session and self._lot_engine
+            and model == self.session.dut_model == self._lot_engine.lot["device_model"]
+        )
+        if not self._emwolf_armed:
+            return
+        self._latest_inputs.pop("emwolf", None)
+        for key in list(self._input_updated):
+            if key.startswith("emwolf."):
+                self._input_updated.pop(key, None)
+                self._input_samples.pop(key, None)
+        if self._emwolf_armed:
+            # Restart only EmWolf-dependent filters; preserve other test history.
+            self._lot_engine.reset_channel("emwolf")
+            self._evaluate_lot({})
+
+    def on_emwolf_result(self, model: str, values: object) -> None:
+        if not self._emwolf_armed or self.session is None or self._lot_engine is None:
+            return
+        if model != self.session.dut_model or not isinstance(values, Mapping):
+            return
+        self._evaluate_lot({"emwolf": values})
+
+    def _refresh_lot_settings(self) -> None:
+        lot = self.session.test_lot if self.session is not None else {}
+        tests = lot.get("tests", []) if lot else []
+        self.lot_label.setText(
+            f"{lot['lot_id']} | {lot['device_model']} | {len(tests)} tests"
+            if lot else "No active test lot - load a versioned JSON file"
+        )
+        blocked = self.lot_test_combo.blockSignals(True)
+        selected = self.lot_test_combo.currentData()
+        self.lot_test_combo.clear()
+        for test in tests:
+            self.lot_test_combo.addItem(f"{test['id']} ({test['report_field']})", test["id"])
+        pos = self.lot_test_combo.findData(selected)
+        self.lot_test_combo.setCurrentIndex(max(pos, 0) if tests else -1)
+        self.lot_test_combo.blockSignals(blocked)
+        self._lot_test_selected()
+
+    def _lot_test_selected(self, *_args) -> None:
+        lot = self.session.test_lot if self.session is not None else {}
+        selected = self.lot_test_combo.currentData()
+        test = next((t for t in lot.get("tests", []) if t["id"] == selected), None)
+        filters = test["filters"] if test else []
+        rang = next((f for f in filters if f["type"] == "range"), None)
+        tol = next((f for f in filters if f["type"] == "tolerance" and f.get("mode", "absolute") == "absolute"), None)
+        numeric = bool(rang or tol)
+        expected = test.get("expected", "") if test else ""
+        if rang and expected == "":
+            expected = (rang["min"] + rang["max"]) / 2
+        delta = (rang["max"] - rang["min"]) / 2 if rang else tol["limit"] if tol else ""
+        self.lot_expected.setText(str(expected))
+        self.lot_tolerance.setText(str(delta))
+        stable = next((f for f in filters if f["type"] == "stable"), None)
+        self.lot_stable_spread.setText(str(stable["max_spread"]) if stable else "")
+        self.lot_stable.setChecked(stable is not None)
+        for control in (self.lot_expected, self.lot_tolerance, self.lot_stable, self.lot_apply_button):
+            control.setEnabled(numeric)
+        self._lot_stability_toggled()
+
+    def _lot_stability_toggled(self, *_args) -> None:
+        self.lot_stable_spread.setEnabled(self.lot_stable.isEnabled() and self.lot_stable.isChecked())
+
+    def _activate_lot(self, lot: dict, path: Path | None = None) -> None:
+        if self.session is None:
+            return
+        validated = validate_lot(lot, set(RUN_TEST_FIELD_KEYS))
+        connected = bool(self.session.transport) and "Offline" not in self.session.transport
+        if connected and self.session.dut_model != validated["device_model"]:
+            raise ValueError("The selected test lot does not match the connected DUT model")
+        self._stop_bench()
+        self._save_current()
+        # Never leak values or verdicts from one test configuration into another.
+        for key in self.session.auto_fields:
+            self.session.test_data.pop(key, None)
+        self.session.auto_fields.clear()
+        self.session.test_results.clear()
+        self.session.test_lot = validated
+        if not connected:
+            self.session.dut_model = validated["device_model"]
+            blocked = self.model_switch.blockSignals(True)
+            self.model_switch.setCurrentText(validated["device_model"])
+            self.model_switch.blockSignals(blocked)
+        self._lot_engine = TestLotEngine(validated, set(RUN_TEST_FIELD_KEYS))
+        self._latest_inputs.clear()
+        self._input_updated.clear()
+        self._input_samples.clear()
+        self._emwolf_armed = False
+        self._manual_overrides.clear()
+        self._lot_path = path
+        self.store.save()
+        self._refresh_lot_settings()
+        # Clear visible values before _show_section saves the outgoing widgets.
+        self._loading = True
+        try:
+            for key, widget in self.test_fields.items():
+                self._set_widget_value(widget, self.session.test_data.get(key, ""))
+        finally:
+            self._loading = False
+        self._show_section(max(0, self.section_list.currentRow()))
+        self._refresh_report_summary()
+
+    def _configure_lot(self, new: bool = False) -> None:
+        if self.session is None:
+            return
+        fields = [(field.key, field.label) for section in RUN_TEST_SECTIONS for field in section.fields]
+        dialog = TestLotEditorDialog(
+            None if new else self.session.test_lot or None,
+            self.session.dut_model,
+            fields,
+            parent=self,
+            build=int(self.session.build) if self.session.build and self.session.transport != "Offline" else None,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.lot is None:
+            return
+        try:
+            self._activate_lot(dialog.lot)
+        except (ValueError, TypeError) as exc:
+            QMessageBox.warning(self, "Test Lot", str(exc))
+
+    def _load_lot_dialog(self) -> None:
+        base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
+        chosen, _ = QFileDialog.getOpenFileName(self, "Load FC22 Test Lot", str(base / "test_lots"), "JSON files (*.json)")
+        if not chosen:
+            return
+        try:
+            self._activate_lot(load_lot(chosen, set(RUN_TEST_FIELD_KEYS)), Path(chosen))
+        except (OSError, ValueError, TypeError) as exc:
+            QMessageBox.warning(self, "Invalid test lot", str(exc))
+
+    def _edit_lot_json(self) -> None:
+        if self.session is None or not self.session.test_lot:
+            QMessageBox.information(self, "Test Lot", "Load a JSON test lot first.")
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Edit Test Lot JSON")
+        dialog.resize(760, 570)
+        layout = QVBoxLayout(dialog)
+        editor = QPlainTextEdit()
+        editor.setPlainText(json.dumps(self.session.test_lot, indent=2, ensure_ascii=False))
+        layout.addWidget(editor)
+        actions = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        actions.accepted.connect(dialog.accept)
+        actions.rejected.connect(dialog.reject)
+        layout.addWidget(actions)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            self._activate_lot(json.loads(editor.toPlainText()), None)
+        except (ValueError, TypeError) as exc:
+            QMessageBox.warning(self, "Invalid test lot", str(exc))
+
+    def _save_lot_json(self) -> None:
+        if self.session is None or not self.session.test_lot:
+            QMessageBox.information(self, "Test Lot", "Load a JSON test lot first.")
+            return
+        chosen, _ = QFileDialog.getSaveFileName(self, "Save Test Lot", "", "JSON files (*.json)")
+        if not chosen:
+            return
+        try:
+            path = Path(chosen)
+            path.write_text(json.dumps(self.session.test_lot, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            self._lot_path = path
+        except OSError as exc:
+            QMessageBox.warning(self, "Save failed", str(exc))
+
+    def _apply_lot_settings(self) -> None:
+        if self.session is None or not self.session.test_lot:
+            return
+        lot = json.loads(json.dumps(self.session.test_lot))
+        selected = self.lot_test_combo.currentData()
+        test = next((t for t in lot["tests"] if t["id"] == selected), None)
+        if test is None:
+            return
+        try:
+            expected = float(self.lot_expected.text())
+            tolerance = float(self.lot_tolerance.text())
+            if not math.isfinite(expected) or not math.isfinite(tolerance) or tolerance < 0:
+                raise ValueError("Expected and tolerance must be finite; tolerance cannot be negative")
+            test["expected"] = expected
+            for filt in test["filters"]:
+                if filt["type"] == "range":
+                    filt["min"], filt["max"] = expected - tolerance, expected + tolerance
+                elif filt["type"] == "tolerance" and filt.get("mode", "absolute") == "absolute":
+                    filt["limit"] = tolerance
+            test["filters"] = [f for f in test["filters"] if f["type"] != "stable"]
+            if self.lot_stable.isChecked():
+                spread = float(self.lot_stable_spread.text())
+                if not math.isfinite(spread) or spread < 0:
+                    raise ValueError("Max spread must be finite and nonnegative")
+                test["filters"].append({"type": "stable", "samples": 5, "max_spread": spread})
+            self._activate_lot(lot)
+        except (ValueError, TypeError) as exc:
+            QMessageBox.warning(self, "Invalid settings", str(exc))
+
+    def _restore_lot(self) -> None:
+        self._lot_engine = None
+        self._lot_path = None
+        self._latest_inputs.clear()
+        self._input_updated.clear()
+        self._input_samples.clear()
+        self._emwolf_armed = False
+        self._manual_overrides.clear()
+        if self.session and self.session.test_lot:
+            try:
+                self._lot_engine = TestLotEngine(self.session.test_lot, set(RUN_TEST_FIELD_KEYS))
+                for result in self.session.test_results.values():
+                    source = result.get("source", "")
+                    if source.startswith(("emwolf.", "external.")) and result.get("status") in ("PASS", "FAIL"):
+                        if result.get("value") is not None:
+                            channel, point = source.split(".", 1)
+                            self._latest_inputs.setdefault(channel, {})[point] = result["value"]
+            except (ValueError, TypeError):
+                # Invalid older session: never silently execute stale test rules.
+                pass
+        self._refresh_lot_settings()
+
+    def on_measurements(self, snapshot: object) -> None:
+        """Consume the existing DeviceService snapshot; no new LAN connection."""
+        if self.session is None or self._lot_engine is None:
+            return
+        if not self.session.transport or self.session.transport == "Offline":
+            return
+        if self.session.dut_model != self._lot_engine.lot["device_model"]:
+            return
+        self._evaluate_lot({
+            "analog": snapshot.analog,
+            "binary": snapshot.binary,
+            "counters": snapshot.counters,
+        }, snapshot.timestamp)
+
+    def apply_external_test_values(self, values: Mapping[str, object]) -> None:
+        """Optional test-bench adapter. Values are still checked by the same lot."""
+        if self._lot_engine is not None and self.session is not None:
+            if self.session.dut_model == self._lot_engine.lot["device_model"]:
+                self._evaluate_lot({"external": dict(values)})
+
+    def _evaluate_lot(self, values: Mapping[str, object], timestamp=None) -> None:
+        if self.session is None or self._lot_engine is None:
+            return
+        received_at = time.monotonic()
+        self._input_sequence += 1
+        fresh_sources: set[str] = set()
+        for channel, items in values.items():
+            if isinstance(items, Mapping):
+                dest = self._latest_inputs.setdefault(channel, {})
+                for point, value in items.items():
+                    dest[point] = value
+                    self._input_updated[f"{channel}.{point}"] = received_at
+                    self._input_samples[f"{channel}.{point}"] = self._input_sequence
+                    fresh_sources.add(f"{channel}.{point}")
+        max_age = self._lot_engine.lot.get("max_age_seconds", 30)
+        for source, updated_at in list(self._input_updated.items()):
+            if source.startswith(("emwolf.", "external.")):
+                continue  # Procedural test events are retained for the current session.
+            if received_at - updated_at > max_age:
+                channel, point = source.split(".", 1)
+                self._latest_inputs.get(channel, {}).pop(point, None)
+                self._input_updated.pop(source, None)
+                self._input_samples.pop(source, None)
+        active_channels: set[str] = set()
+        if self.session.dut_model == self._lot_engine.lot["device_model"]:
+            if self.session.transport and self.session.transport != "Offline":
+                active_channels.update(("analog", "binary", "counters"))
+            if self._bench_adapter.running or self._latest_inputs.get("external"):
+                active_channels.add("external")
+            if self._emwolf_armed or self._latest_inputs.get("emwolf"):
+                active_channels.add("emwolf")
+        result_map = self._lot_engine.evaluate(
+            self._latest_inputs, source_timestamps=self._input_samples,
+            active_channels=active_channels,
+        )
+        changed_fields: set[str] = set()
+        fields = {field.key: field for sec in RUN_TEST_SECTIONS for field in sec.fields}
+        for key, result in result_map.items():
+            if key in self._manual_overrides:
+                if result.source not in fresh_sources:
+                    continue
+                self._manual_overrides.discard(key)
+            previous = self.session.test_results.get(key, {})
+            current = result.as_dict()
+            if {k: v for k, v in previous.items() if k != "timestamp"} == {k: v for k, v in current.items() if k != "timestamp"}:
+                continue
+            self.session.test_results[key] = current
+            changed_fields.add(key)
+            field = fields[key]
+            if key in self.session.auto_fields:
+                self.session.test_data.pop(key, None)
+            if result.status in ("PASS", "FAIL") and result.value is not None:
+                if field.kind == "result":
+                    value = result.status
+                elif field.kind == "boolean":
+                    if not isinstance(result.value, bool):
+                        continue
+                    value = str(result.value)
+                else:
+                    value = str(result.value)
+                self.session.test_data[key] = value
+                if key not in self.session.auto_fields:
+                    self.session.auto_fields.append(key)
+        self._loading = True
+        try:
+            for key, widget in self.test_fields.items():
+                if key in changed_fields:
+                    self._set_widget_value(widget, self.session.test_data.get(key, ""))
+        finally:
+            self._loading = False
+        if changed_fields:
+            self.store.save()
+            self._refresh_test_status()
 
     # -- Form Data ----------------------------------------------------------
     def _build_form_page(self) -> QWidget:
@@ -513,14 +1010,27 @@ class Fc22TesterPage(QWidget):
         layout.addWidget(center_box, 1)
 
         status_box = QGroupBox("Status")
-        status_box.setMaximumWidth(220)
+        status_box.setMinimumWidth(270)
+        status_box.setMaximumWidth(330)
         status = QVBoxLayout(status_box)
-        self.test_status = QLabel("Manual fields  0 / 0")
+        self.test_status = QLabel("Filled fields  0 / 0")
         self.section_status = QLabel("Sections  0 / 0")
         self.test_status.setStyleSheet("font-weight:700;")
         status.addWidget(self.test_status)
         status.addWidget(self.section_status)
-        status.addStretch()
+        self.lot_result_status = QLabel("Test Lot: not loaded")
+        self.lot_result_status.setWordWrap(True)
+        status.addWidget(self.lot_result_status)
+        status.addWidget(QLabel("JSON test results"))
+        self.lot_result_table = QTableWidget(0, 3)
+        self.lot_result_table.setHorizontalHeaderLabels(("Test", "Value", "Verdict"))
+        self.lot_result_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.lot_result_table.verticalHeader().setVisible(False)
+        self.lot_result_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.lot_result_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.lot_result_table.setAlternatingRowColors(True)
+        self.lot_result_table.setMinimumHeight(170)
+        status.addWidget(self.lot_result_table, 1)
         note = QLabel(
             "Result-only items use PASS / FAIL / UNKNOWN; status items use "
             "TRUE / FALSE / UNKNOWN. Measured values are typed exactly as read."
@@ -583,6 +1093,9 @@ class Fc22TesterPage(QWidget):
 
     # ------------------------------------------------------------- session
     def _new_session(self) -> None:
+        if hasattr(self, "_bench_adapter"):
+            self._stop_bench()
+        self._emwolf_armed = False
         self._save_current()
         self.session = self.store.new_session()
         self._apply_session_to_ui()
@@ -598,6 +1111,8 @@ class Fc22TesterPage(QWidget):
         except (OSError, ValueError, KeyError) as exc:
             QMessageBox.critical(self, "Load failed", str(exc))
             return
+        self._stop_bench()
+        self._emwolf_armed = False
         self._apply_session_to_ui()
         self.current_pdf = None
         self._update_session_label()
@@ -613,6 +1128,7 @@ class Fc22TesterPage(QWidget):
                 widget = self.fields[key]
                 widget.setText(getattr(self.session, key))
             model = self.session.dut_model
+            self.model_switch.setEnabled(not bool(self.session.transport) or self.session.transport == "Offline")
             if model in ("FC22AR", "FC22S"):
                 blocked = self.model_switch.blockSignals(True)
                 self.model_switch.setCurrentText(model)
@@ -624,12 +1140,12 @@ class Fc22TesterPage(QWidget):
                     continue
                 value = self.session.form_data.get(key, "")
                 self._set_widget_value(widget, value)
-            for key, value in self.session.test_data.items():
-                widget = self.test_fields.get(key)
-                if widget is not None:
-                    self._set_widget_value(widget, value)
+            self.fields["software_version"].setText(self.session.firmware)
+            for key, widget in self.test_fields.items():
+                self._set_widget_value(widget, self.session.test_data.get(key, ""))
         finally:
             self._loading = False
+        self._restore_lot()
         self._refresh_form_completeness()
         self._refresh_test_status()
 
@@ -690,14 +1206,31 @@ class Fc22TesterPage(QWidget):
         info_connected = bool(self.session.transport) and "Offline" not in self.session.transport
         if info_connected:
             return
+        changed = model != self.session.dut_model
         self.session.dut_model = model
+        if changed:
+            self._stop_bench()
+            self._reset_lot_inputs()
         self.store.save()
+
+    def _reset_lot_inputs(self) -> None:
+        """A new DUT identity cannot inherit verified values from the old one."""
+        self._latest_inputs.clear()
+        self._input_updated.clear()
+        self._input_samples.clear()
+        self._manual_overrides.clear()
+        self._emwolf_armed = False
+        if self._lot_engine is not None:
+            self._lot_engine = TestLotEngine(self._lot_engine.lot, set(RUN_TEST_FIELD_KEYS))
+            self._evaluate_lot({})
 
     # --------------------------------------------------------- device identity
     def set_device_info(self, info: DeviceInfo) -> None:
         """Adopt the identity already read by the WolfEye DeviceService."""
         if self.session is None:
             return
+        old_identity = (self.session.dut_model, self.session.dut_ip, self.session.build)
+        was_connected = bool(self.session.transport) and self.session.transport != "Offline"
         self._loading = True
         try:
             live = info.connected
@@ -726,8 +1259,14 @@ class Fc22TesterPage(QWidget):
             self.session.form_data["software_version"] = self.session.firmware
         finally:
             self._loading = False
+        self.model_switch.setEnabled(not info.connected)
+        new_identity = (self.session.dut_model, self.session.dut_ip, self.session.build)
+        if old_identity != new_identity or was_connected != info.connected:
+            self._stop_bench()
+            self._reset_lot_inputs()
         self.store.save()
         self._refresh_form_completeness()
+        self._refresh_lot_settings()
 
     # ------------------------------------------------ future DUT test input
     def apply_dut_test_values(self, values: Mapping[str, object]) -> None:
@@ -846,13 +1385,27 @@ class Fc22TesterPage(QWidget):
     def _test_changed(self, *_args) -> None:
         if self._loading:
             return
+        # A direct operator edit is not an automated, device-verified verdict.
+        if self.session is not None:
+            widget = self.sender()
+            for key, control in self.test_fields.items():
+                if control is widget and key in self.session.test_results:
+                    self.session.test_results[key] = {
+                        **self.session.test_results[key], "status": "NOT_TESTED",
+                        "reason": "operator edited the field; waiting for a fresh measurement",
+                        "value": None,
+                    }
+                    self._manual_overrides.add(key)
+                    if key in self.session.auto_fields:
+                        self.session.auto_fields.remove(key)
+                    break
         self._save_current()
         self._refresh_test_status()
 
     @staticmethod
     def _filled(value: object) -> bool:
         return value is True or value is False or (
-            value is not None and str(value).strip() != ""
+            value is not None and str(value).strip().upper() not in ("", "UNKNOWN", "NOT_TESTED", "INVALID")
         )
 
     def _refresh_test_status(self) -> None:
@@ -864,8 +1417,16 @@ class Fc22TesterPage(QWidget):
         for section in RUN_TEST_SECTIONS:
             if all(self._filled(data.get(field.key)) for field in section.fields):
                 complete_sections += 1
-        self.test_status.setText(f"Manual fields  {filled} / {len(RUN_TEST_FIELD_KEYS)}")
+        self.test_status.setText(f"Filled fields  {filled} / {len(RUN_TEST_FIELD_KEYS)}")
         self.section_status.setText(f"Sections  {complete_sections} / {len(RUN_TEST_SECTIONS)}")
+        verdicts = [self.session.test_results.get(test["report_field"], {}).get("status", "NOT_TESTED")
+                    for test in self.session.test_lot.get("tests", [])]
+        self.lot_result_status.setText(
+            f"JSON Tests: {verdicts.count('PASS')} PASS / {verdicts.count('FAIL')} FAIL / "
+            f"{verdicts.count('NOT_TESTED')} PENDING / {verdicts.count('INVALID')} INVALID"
+            if self.session.test_lot else "Test Lot: not loaded"
+        )
+        self._refresh_lot_results_table()
         color = "#18864b" if filled == len(RUN_TEST_FIELD_KEYS) else "#a55b00"
         self.test_status.setStyleSheet(f"color:{color}; font-weight:700;")
         current = self.section_list.currentRow()
@@ -875,6 +1436,40 @@ class Fc22TesterPage(QWidget):
             self.section_list.item(row).setText(f"{marker}  {section.title}")
         if current >= 0:
             self.section_list.setCurrentRow(current)
+
+    def _refresh_lot_results_table(self) -> None:
+        """Update the native results view without rebuilding it every sample."""
+        if self.session is None:
+            return
+        tests = self.session.test_lot.get("tests", [])
+        rows = tuple((test["id"], test["report_field"]) for test in tests)
+        if rows != self._lot_table_rows:
+            self._lot_table_rows = rows
+            self.lot_result_table.setRowCount(len(rows))
+            for index, (test_id, _) in enumerate(rows):
+                self.lot_result_table.setItem(index, 0, QTableWidgetItem(test_id))
+                self.lot_result_table.setItem(index, 1, QTableWidgetItem("-"))
+                self.lot_result_table.setItem(index, 2, QTableWidgetItem("NOT TESTED"))
+        for index, (_, field) in enumerate(rows):
+            result = self.session.test_results.get(field, {})
+            value = result.get("value")
+            display_value = "-" if value is None else str(value)
+            status = result.get("status", "NOT_TESTED")
+            verdict = "PENDING" if status == "NOT_TESTED" else status
+            reason = result.get("reason", "No reading yet")
+            if result.get("timestamp"):
+                reason += f"\nLast evaluated: {result['timestamp']}"
+            for column, text in ((1, display_value), (2, verdict)):
+                cell = self.lot_result_table.item(index, column)
+                if cell.text() != text:
+                    cell.setText(text)
+                if cell.toolTip() != reason:
+                    cell.setToolTip(reason)
+            verdict_cell = self.lot_result_table.item(index, 2)
+            color = {"PASS": "#24754e", "FAIL": "#a14343", "INVALID": "#98611b"}.get(status, "#647580")
+            if verdict_cell.data(Qt.ItemDataRole.UserRole) != status:
+                verdict_cell.setForeground(QColor(color))
+                verdict_cell.setData(Qt.ItemDataRole.UserRole, status)
 
     def _previous_section(self) -> None:
         row = self.section_list.currentRow()
@@ -899,7 +1494,8 @@ class Fc22TesterPage(QWidget):
             f"Session {self.session.session_id} · operator {self.session.operator or '—'} · "
             f"DUT {self.session.dut_model or '—'} {self.session.dut_ip or '—'} · "
             f"software {self.session.firmware or '—'} · RUN TEST fields {filled}/{len(RUN_TEST_FIELD_KEYS)}. "
-            "The PDF uses the current values; blank fields remain blank."
+            "The PDF uses current measured values. Automated verdicts and the exact rules "
+            "are stored in session.json; missing and invalid measurements remain blank."
         )
         self.generate_button.setEnabled(True)
         self.generate_button.setToolTip("Generate the checklist PDF with the current values.")
@@ -916,12 +1512,17 @@ class Fc22TesterPage(QWidget):
         values: dict[str, object] = {}
         for key in self.session.form_data:
             values[key] = self.session.form_data[key]
+        boolean_keys = {"ac_available", "door_true", "lockout_true", "external_modem"}
         for key, value in self.session.test_data.items():
-            if isinstance(value, bool):
+            if key in boolean_keys:
+                normalized = str(value).strip().lower()
+                if normalized in ("true", "false"):
+                    values[key] = normalized == "true"
+                # Unknown and pending readings must not check either PDF box.
+            elif isinstance(value, bool):
                 values[key] = value
             else:
-                text = str(value).strip()
-                values[key] = text
+                values[key] = str(value).strip()
         values["test_date"] = (
             self.session.started_at or datetime.now().astimezone().isoformat(timespec="seconds")
         )[:10]
@@ -935,7 +1536,24 @@ class Fc22TesterPage(QWidget):
     def _generate_form(self) -> None:
         if self.session is None:
             return
+        self._evaluate_lot({})
         self._save_current()
+        tests = self.session.test_lot.get("tests", [])
+        complete = bool(self._lot_engine and tests
+                        and self.session.dut_model == self._lot_engine.lot["device_model"])
+        complete = complete and all(
+            self.session.test_results.get(test["report_field"], {}).get("status") == "PASS"
+            and self.session.test_results[test["report_field"]].get("source") == test["source"]
+            for test in tests
+        )
+        if self.session.test_lot and not complete:
+            answer = QMessageBox.question(
+                self, "Incomplete test lot",
+                "Some automated tests have not passed. The PDF will contain measured "
+                "values only and must not be treated as an approved result. Continue?",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
         form = str(self.form_combo.currentData())
         directory = self.store.directory or Path(".")
         output = directory / f"final_inspection_{form.upper()}.pdf"
@@ -1000,10 +1618,7 @@ class Fc22TesterPage(QWidget):
         QMessageBox.information(self, "Session JSON", f"Session JSON is stored at:\n{target}")
 
     def shutdown(self) -> None:
-        """Company cleanup order: persist operator data only.
-
-        Device connections are owned by ``DeviceService`` / ``EmWolfPage`` and
-        are closed by MainWindow.closeEvent as before; this page must not and
-        does not stop them.
-        """
+        """Stop the bench listener and persist the operator-owned session."""
+        self._lot_timer.stop()
+        self._stop_bench()
         self._save_current()

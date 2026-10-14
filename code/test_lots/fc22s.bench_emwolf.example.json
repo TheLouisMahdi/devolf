@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "lot_id": "FC22S-BENCH-EMWOLF-DEMO",
+  "device_model": "FC22S",
+  "max_age_seconds": 30,
+  "tests": [
+    {
+      "id": "battery_charge_voltage",
+      "source": "external.charging_voltage",
+      "report_field": "charging_voltage",
+      "unit": "V",
+      "filters": [{"type": "range", "min": 26.0, "max": 29.0}]
+    },
+    {
+      "id": "phase_phase_trip",
+      "source": "emwolf.scenario_1.trip_time_ms",
+      "report_field": "fault_phase_phase",
+      "unit": "ms",
+      "filters": [{"type": "range", "min": 10, "max": 100}]
+    }
+  ]
+}

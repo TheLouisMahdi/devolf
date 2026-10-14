@@ -188,6 +188,45 @@ FC22 Tester consumes the existing device state. Inspection sessions are
 generated under `sessions/`; supplied FC22AR/FC22S scenarios remain in their
 named scenario folders.
 
+### FC22 Test Lots
+
+In **FC22 Tester → Setup**, create a Test Lot or load a version-1 JSON file
+from [code/test_lots](code/test_lots). Select the DUT model and assign each test
+to a checklist field. The source editor uses BeachEye's point catalog, including
+the connected DUT's exact build when available. Offline lots accept company
+points from revision 50 and newer; an unavailable reading remains NOT_TESTED.
+
+- `analog`, `binary` and `counters` consume the existing DeviceService snapshots.
+  Analog and counter values are the **same raw values shown in Measurements**;
+  the unit label does not convert them. Set acceptance limits in those units.
+  The frequency source is `analog.F ABC` (load side: `analog.F RST`).
+- `emwolf.scenario_N.trip_time_ms` consumes a confirmed trip from the Nth scenario
+  of an EmWolf run started after selecting the lot. Time is converted to milliseconds.
+- `external.FIELD` accepts equipment measurements through the optional Test Bench
+  listener, or the existing external-value adapter. Start the listener explicitly
+  and use the displayed session ID and temporary token. Its protocol is a 4-byte
+  network-order length followed by a JSON measurement object; the examples include
+  a bench/EmWolf lot. Each device's sequence number must increase.
+
+Example bench object (prefix its UTF-8 JSON with the 4-byte byte length):
+
+```json
+{"version":1,"source":"testbench","type":"measurement","device":"meter_1","sequence":1,"session_id":"CURRENT_SESSION_ID","token":"CURRENT_LISTENER_TOKEN","field":"charging_voltage","value":27.2,"unit":"V"}
+```
+
+Changing the lot, DUT identity or session stops the bench listener and resets
+its input context. Queued measurements from an earlier listener cannot verify
+the new context. Live readings expire after `max_age_seconds` (default 30);
+timeouts advance even when no new response arrives. EmWolf deadlines start when
+its run begins. Stability counts distinct received samples, not timer ticks.
+
+Every configured test must have a verified PASS before the lot is complete.
+Editing an automatic field manually marks it NOT_TESTED until a fresh source
+measurement arrives. Generating a PDF with an incomplete lot requires acknowledging
+the warning; the exact rules and individual verdicts remain in `session.json`.
+All Test Lot regression tests are in the root `tests/` directory and run during
+the normal build.
+
 ## Documentation
 
 - [Complete company file mapping and DEVolf module responsibilities](docs/UPSTREAM_SYNC.md)

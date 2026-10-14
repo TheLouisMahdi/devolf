@@ -58,6 +58,11 @@ class Fc22Session:
     # hold True / False (persisted as the strings "True"/"False") or "".
     test_data: dict[str, object] = field(default_factory=dict)
 
+    # Exact test specification snapshot and independently audited verdicts.
+    test_lot: dict[str, object] = field(default_factory=dict)
+    test_results: dict[str, dict[str, object]] = field(default_factory=dict)
+    auto_fields: list[str] = field(default_factory=list)
+
     note: str = ""
 
 
@@ -79,7 +84,12 @@ class Fc22SessionStore:
     # ------------------------------------------------------------- sessions
     def new_session(self) -> Fc22Session:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        session = Fc22Session(session_id=f"{SESSION_PREFIX}{stamp}")
+        session_id = f"{SESSION_PREFIX}{stamp}"
+        suffix = 0
+        while (self.root / session_id).exists():
+            suffix += 1
+            session_id = f"{SESSION_PREFIX}{stamp}-{suffix}"
+        session = Fc22Session(session_id=session_id)
         self.session = session
         self.save()
         return session
@@ -119,6 +129,9 @@ class Fc22SessionStore:
             },
             "form_data": dict(self.session.form_data),
             "test_data": dict(self.session.test_data),
+            "test_lot": dict(self.session.test_lot),
+            "test_results": dict(self.session.test_results),
+            "auto_fields": list(self.session.auto_fields),
             "note": self.session.note,
         }
         temporary.write_text(
@@ -148,6 +161,9 @@ class Fc22SessionStore:
                 for key, value in payload.get("form_data", {}).items()
             },
             test_data=dict(payload.get("test_data", {})),
+            test_lot=dict(payload.get("test_lot", {})),
+            test_results=dict(payload.get("test_results", {})),
+            auto_fields=list(payload.get("auto_fields", [])),
             note=str(payload.get("note", "")),
         )
         self.session = session
