@@ -107,10 +107,12 @@ class StatusPage(QWidget):
         self.breaker.setObjectName("metricValue")
         state_layout.addWidget(self.breaker)
         state_layout.addStretch()
+
         open_btn = QPushButton("OPEN")
-        open_btn.setObjectName("danger")
+        open_btn.setObjectName("success")
         close_btn = QPushButton("CLOSE")
-        close_btn.setObjectName("success")
+        close_btn.setObjectName("danger")
+
         refresh_btn = QPushButton("Read status")
         open_btn.clicked.connect(lambda: self.control_requested.emit("OPEN"))
         close_btn.clicked.connect(lambda: self.control_requested.emit("CLOSE"))
