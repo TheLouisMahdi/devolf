@@ -190,6 +190,29 @@ named scenario folders.
 
 ### FC22 Test Lots
 
+FC22 Tester shares the **existing EmWolfConnection and EWS2 protocol** with the
+EmWolf tab. Its Setup page can connect/disconnect the board, run the current
+EmWolf project and open the scenario editor. Both tabs show the same connection
+state and endpoint. Connecting the test board and reading the FC22 DUT remain
+the existing separate EmWolf and DeviceService responsibilities.
+
+Without loading a lot, incoming DUT snapshots automatically fill **22 numeric
+fields** (phase/line voltages, currents, total powers, both frequencies and PF)
+and **3 status fields** (AC supply, door and lockout), plus the existing device
+identity/software fields. While Tester is visible, its automatic-update option
+requests DUT measurements every two seconds through DeviceService and waits
+while device operations are busy. Manual reads are also available. Values use
+the same raw units as Measurements, with no inferred scaling or synthetic values.
+
+Confirmed EmWolf scenario times and feedback are recorded even without a lot.
+The results view distinguishes **MEASURED** values from acceptance verdicts.
+Use a Test Lot to define the acceptance conditions for protection and digital
+tests; receiving feedback or a status bit alone does not declare those tests
+PASS. Serial numbers, visual inspections and measurements unavailable from
+the existing protocols remain manual. Session JSON records measurement sources,
+timestamps and confirmed EmWolf feedback. The optional external-equipment
+adapter is separate from the shared EmWolf board controls.
+
 In **FC22 Tester → Setup**, create a Test Lot or load a version-1 JSON file
 from [code/test_lots](code/test_lots). Select the DUT model and assign each test
 to a checklist field. The source editor uses BeachEye's point catalog, including

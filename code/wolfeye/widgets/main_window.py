@@ -424,6 +424,14 @@ class MainWindow(QMainWindow):
         self.emwolf_page.log_line.connect(self.emwolf_log_view.appendPlainText)
         self.emwolf_page.test_run_started.connect(self.fc22_tester_page.on_emwolf_run_started)
         self.emwolf_page.test_result.connect(self.fc22_tester_page.on_emwolf_result)
+        self.emwolf_page.board_state_changed.connect(self.fc22_tester_page.set_emwolf_board_state)
+        self.fc22_tester_page.emwolf_connect_requested.connect(self.emwolf_page.toggle_board_connection)
+        self.fc22_tester_page.emwolf_run_requested.connect(self.emwolf_page.run_project)
+        self.fc22_tester_page.emwolf_setup_requested.connect(
+            lambda: self.tabs.setCurrentWidget(self._tab_containers[self.emwolf_page])
+        )
+        self.fc22_tester_page.refresh_requested.connect(self._refresh_tester_measurements)
+        self.emwolf_page.publish_board_state()
         self.emwolf_page.log_window_requested.connect(self._show_emwolf_log_window)
         self.connect_btn.clicked.connect(self.toggle_connection)
         self.status_page.control_requested.connect(self.service.send_control)
@@ -521,6 +529,10 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Measurements updated at {snapshot.timestamp:%H:%M:%S}"
         )
+
+    def _refresh_tester_measurements(self) -> None:
+        if self.service.connected and not self._device_busy:
+            self.service.refresh()
 
     def on_busy(self, busy: bool) -> None:
         self._device_busy = busy

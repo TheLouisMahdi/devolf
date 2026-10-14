@@ -62,6 +62,8 @@ class Fc22Session:
     test_lot: dict[str, object] = field(default_factory=dict)
     test_results: dict[str, dict[str, object]] = field(default_factory=dict)
     auto_fields: list[str] = field(default_factory=list)
+    auto_readings: dict[str, dict[str, object]] = field(default_factory=dict)
+    emwolf_results: dict[str, object] = field(default_factory=dict)
 
     note: str = ""
 
@@ -132,6 +134,8 @@ class Fc22SessionStore:
             "test_lot": dict(self.session.test_lot),
             "test_results": dict(self.session.test_results),
             "auto_fields": list(self.session.auto_fields),
+            "auto_readings": dict(self.session.auto_readings),
+            "emwolf_results": dict(self.session.emwolf_results),
             "note": self.session.note,
         }
         temporary.write_text(
@@ -164,6 +168,8 @@ class Fc22SessionStore:
             test_lot=dict(payload.get("test_lot", {})),
             test_results=dict(payload.get("test_results", {})),
             auto_fields=list(payload.get("auto_fields", [])),
+            auto_readings=dict(payload.get("auto_readings", {})),
+            emwolf_results=dict(payload.get("emwolf_results", {})),
             note=str(payload.get("note", "")),
         )
         self.session = session

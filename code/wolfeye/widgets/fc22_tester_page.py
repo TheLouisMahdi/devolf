@@ -24,6 +24,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 import json
+import copy
 import math
 import os
 import subprocess
@@ -56,6 +57,7 @@ from wolfeye.qt import (
     QPushButton,
     QPlainTextEdit,
     QScrollArea,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -68,6 +70,8 @@ from wolfeye.qt import (
 from wolfeye.models import DeviceInfo
 from wolfeye.widgets.fc22_lot_editor import TestLotEditorDialog
 from wolfeye.services.fc22_input_adapters import BenchTcpAdapter, validate_bench_lot_source
+from wolfeye.services.fc22_autofill import snapshot_readings
+from wolfeye.services.emwolf_protocol import DEFAULT_HOST, DEFAULT_PORT
 from wolfeye.services.fc22_form_pdf import fill_form
 from wolfeye.services.fc22_session import Fc22Session, Fc22SessionStore
 from wolfeye.services.fc22_test_lot import TestLotEngine, load_lot, validate_lot
@@ -255,6 +259,10 @@ class Fc22TesterPage(QWidget):
     """Native WolfEye FC22 Tester section (Setup → Form Data → Run Test → Report)."""
 
     log_line = Signal(str)
+    emwolf_connect_requested = Signal(str, int)
+    emwolf_run_requested = Signal()
+    emwolf_setup_requested = Signal()
+    refresh_requested = Signal()
 
     def __init__(self, store: Fc22SessionStore | None = None) -> None:
         super().__init__()
@@ -269,6 +277,9 @@ class Fc22TesterPage(QWidget):
         self._input_updated: dict[str, float] = {}
         self._input_samples: dict[str, int] = {}
         self._input_sequence = 0
+        self._reading_updated: dict[str, float] = {}
+        self._live_device_info: DeviceInfo | None = None
+        self._emwolf_connected = False
         self._lot_table_rows: tuple[tuple[str, str], ...] = ()
         self._emwolf_armed = False
         self._manual_overrides: set[str] = set()
@@ -288,8 +299,12 @@ class Fc22TesterPage(QWidget):
         self._show_step(0)
         self._lot_timer = QTimer(self)
         self._lot_timer.setInterval(250)
-        self._lot_timer.timeout.connect(lambda: self._evaluate_lot({}))
+        self._lot_timer.timeout.connect(self._automation_tick)
         self._lot_timer.start()
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setInterval(2000)
+        self._refresh_timer.timeout.connect(self._request_auto_refresh)
+        self._refresh_timer.start()
 
     # ------------------------------------------------------------- UI build
     def _build_ui(self) -> None:
@@ -410,8 +425,14 @@ class Fc22TesterPage(QWidget):
         note.setObjectName("muted")
         note.setWordWrap(True)
         layout.addWidget(dut_box)
+        layout.addWidget(self._build_emwolf_controls())
         layout.addWidget(self._build_lot_settings())
-        layout.addWidget(self._build_bench_settings())
+        bench = self._build_bench_settings()
+        bench.setVisible(False)
+        show_bench = QCheckBox("External equipment adapter")
+        show_bench.toggled.connect(bench.setVisible)
+        layout.addWidget(show_bench)
+        layout.addWidget(bench)
         layout.addWidget(note)
         layout.addStretch()
 
@@ -420,6 +441,51 @@ class Fc22TesterPage(QWidget):
         continue_button.clicked.connect(lambda: self._show_step(1))
         layout.addWidget(continue_button, 0, Qt.AlignmentFlag.AlignRight)
         return page
+
+    def _build_emwolf_controls(self) -> QWidget:
+        group = QGroupBox("EmWolf test board")
+        layout = QGridLayout(group)
+        self.emwolf_host = QLineEdit(DEFAULT_HOST)
+        self.emwolf_port = QSpinBox()
+        self.emwolf_port.setRange(1, 65535)
+        self.emwolf_port.setValue(DEFAULT_PORT)
+        self.emwolf_connect_button = QPushButton("Connect EmWolf")
+        self.emwolf_connect_button.clicked.connect(lambda: self.emwolf_connect_requested.emit(self.emwolf_host.text().strip(), self.emwolf_port.value()))
+        self.emwolf_run_button = QPushButton("Run EmWolf project")
+        self.emwolf_run_button.setEnabled(False)
+        self.emwolf_run_button.clicked.connect(self.emwolf_run_requested.emit)
+        configure = QPushButton("Configure scenarios")
+        configure.clicked.connect(self.emwolf_setup_requested.emit)
+        self.emwolf_state = QLabel("Disconnected")
+        self.emwolf_feedback = QLabel("No confirmed EmWolf result in this session")
+        self.auto_refresh = QCheckBox("Update DUT measurements automatically while Tester is open")
+        self.auto_refresh.setChecked(True)
+        refresh = QPushButton("Read DUT measurements")
+        refresh.clicked.connect(self.refresh_requested.emit)
+        for col, widget in enumerate((QLabel("Host"), self.emwolf_host, QLabel("Port"), self.emwolf_port,
+                                      self.emwolf_connect_button, self.emwolf_run_button, configure)):
+            layout.addWidget(widget, 0, col)
+        layout.addWidget(self.emwolf_state, 1, 0, 1, 2)
+        layout.addWidget(self.emwolf_feedback, 1, 2, 1, 5)
+        layout.addWidget(self.auto_refresh, 2, 0, 1, 5)
+        layout.addWidget(refresh, 2, 5, 1, 2)
+        return group
+
+    def set_emwolf_board_state(self, connected: bool, host: str, port: int) -> None:
+        self._emwolf_connected = connected
+        if not connected:
+            self._emwolf_armed = False
+        self.emwolf_host.setText(host)
+        self.emwolf_port.setValue(port)
+        self.emwolf_host.setEnabled(not connected)
+        self.emwolf_port.setEnabled(not connected)
+        self.emwolf_connect_button.setText("Disconnect EmWolf" if connected else "Connect EmWolf")
+        self.emwolf_run_button.setEnabled(connected)
+        self.emwolf_state.setText("Connected" if connected else "Disconnected")
+
+    def _request_auto_refresh(self) -> None:
+        if self.isVisible() and self.auto_refresh.isChecked() and self._live_device_info and self._live_device_info.connected:
+            self.refresh_requested.emit()
 
 
     def _build_lot_settings(self) -> QWidget:
@@ -558,28 +624,39 @@ class Fc22TesterPage(QWidget):
         self._evaluate_lot({"external": {field: value}})
 
     def on_emwolf_run_started(self, model: str) -> None:
+        self._save_current()
         self._emwolf_armed = bool(
-            self.session and self._lot_engine
-            and model == self.session.dut_model == self._lot_engine.lot["device_model"]
+            self.session and model == self.session.dut_model
+            and (self._lot_engine is None or model == self._lot_engine.lot["device_model"])
         )
         if not self._emwolf_armed:
             return
+        self.session.emwolf_results.clear()
+        self.emwolf_feedback.setText("EmWolf run started; waiting for confirmed feedback")
+        self.store.save()
         self._latest_inputs.pop("emwolf", None)
         for key in list(self._input_updated):
             if key.startswith("emwolf."):
                 self._input_updated.pop(key, None)
                 self._input_samples.pop(key, None)
-        if self._emwolf_armed:
+        if self._lot_engine is not None:
             # Restart only EmWolf-dependent filters; preserve other test history.
             self._lot_engine.reset_channel("emwolf")
             self._evaluate_lot({})
 
     def on_emwolf_result(self, model: str, values: object) -> None:
-        if not self._emwolf_armed or self.session is None or self._lot_engine is None:
+        if not self._emwolf_armed or self.session is None:
             return
         if model != self.session.dut_model or not isinstance(values, Mapping):
             return
+        self.session.emwolf_results.update(values)
+        self.emwolf_feedback.setText("EmWolf feedback: " + "; ".join(
+            f"{point.split('.')[0]} = {value:g} ms" for point, value in self.session.emwolf_results.items()
+            if point.endswith(".trip_time_ms") and type(value) in (int, float)
+        ))
+        self.store.save()
         self._evaluate_lot({"emwolf": values})
+        self._refresh_test_status()
 
     def _refresh_lot_settings(self) -> None:
         lot = self.session.test_lot if self.session is not None else {}
@@ -648,6 +725,8 @@ class Fc22TesterPage(QWidget):
         self._input_samples.clear()
         self._emwolf_armed = False
         self._manual_overrides.clear()
+        self._clear_observations()
+        self.session.emwolf_results.clear()
         self._lot_path = path
         self.store.save()
         self._refresh_lot_settings()
@@ -764,6 +843,7 @@ class Fc22TesterPage(QWidget):
         self._input_samples.clear()
         self._emwolf_armed = False
         self._manual_overrides.clear()
+        self._reading_updated.clear()
         if self.session and self.session.test_lot:
             try:
                 self._lot_engine = TestLotEngine(self.session.test_lot, set(RUN_TEST_FIELD_KEYS))
@@ -778,13 +858,80 @@ class Fc22TesterPage(QWidget):
                 pass
         self._refresh_lot_settings()
 
+    def _update_observation_widgets(self, fields: set[str]) -> None:
+        self._loading = True
+        try:
+            for key in fields:
+                if key in self.test_fields:
+                    self._set_widget_value(self.test_fields[key], self.session.test_data.get(key, ""))
+        finally:
+            self._loading = False
+        self._refresh_test_status()
+
+    def _clear_observations(self) -> None:
+        self._reading_updated.clear()
+        if self.session is None:
+            return
+        fields = set(self.session.auto_readings)
+        for key in fields:
+            if key in self.session.auto_fields:
+                self.session.test_data.pop(key, None)
+                self.session.auto_fields.remove(key)
+        self.session.auto_readings.clear()
+        if fields:
+            self._update_observation_widgets(fields)
+
+    def _apply_observations(self, readings: dict[str, dict[str, object]]) -> None:
+        controlled = {test["report_field"] for test in self.session.test_lot.get("tests", [])}
+        changed = set(self.session.auto_readings) - set(readings)
+        for key in changed:
+            self.session.auto_readings.pop(key, None)
+            self._reading_updated.pop(key, None)
+            if key in self.session.auto_fields:
+                self.session.test_data.pop(key, None)
+                self.session.auto_fields.remove(key)
+        for key, reading in readings.items():
+            if key in controlled:
+                continue
+            self.session.auto_readings[key] = {**reading, "model": self.session.dut_model, "ip": self.session.dut_ip}
+            self._reading_updated[key] = time.monotonic()
+            self.session.test_data[key] = str(reading["value"])
+            self._manual_overrides.discard(key)
+            if key not in self.session.auto_fields:
+                self.session.auto_fields.append(key)
+            changed.add(key)
+        if changed:
+            self._update_observation_widgets(changed)
+            self.store.save()
+
+    def _automation_tick(self) -> None:
+        if self.session is not None:
+            maximum = self.session.test_lot.get("max_age_seconds", 30)
+            expired = {key for key, updated in self._reading_updated.items()
+                       if time.monotonic() - updated > maximum}
+            for key in expired:
+                self._reading_updated.pop(key, None)
+                self.session.auto_readings.pop(key, None)
+                if key in self.session.auto_fields:
+                    self.session.test_data.pop(key, None)
+                    self.session.auto_fields.remove(key)
+            if expired:
+                self._update_observation_widgets(expired)
+                self.store.save()
+        self._evaluate_lot({})
+
     def on_measurements(self, snapshot: object) -> None:
         """Consume the existing DeviceService snapshot; no new LAN connection."""
-        if self.session is None or self._lot_engine is None:
+        if self.session is None or self._live_device_info is None or not self._live_device_info.connected:
             return
         if not self.session.transport or self.session.transport == "Offline":
             return
-        if self.session.dut_model != self._lot_engine.lot["device_model"]:
+        if (self.session.dut_model, self.session.dut_ip, self.session.build) != (
+            self._live_device_info.model, self._live_device_info.ip, str(self._live_device_info.build or "")
+        ):
+            return
+        self._apply_observations(snapshot_readings(snapshot))
+        if self._lot_engine is None or self.session.dut_model != self._lot_engine.lot["device_model"]:
             return
         self._evaluate_lot({
             "analog": snapshot.analog,
@@ -1021,7 +1168,7 @@ class Fc22TesterPage(QWidget):
         self.lot_result_status = QLabel("Test Lot: not loaded")
         self.lot_result_status.setWordWrap(True)
         status.addWidget(self.lot_result_status)
-        status.addWidget(QLabel("JSON test results"))
+        status.addWidget(QLabel("Measurements & test results"))
         self.lot_result_table = QTableWidget(0, 3)
         self.lot_result_table.setHorizontalHeaderLabels(("Test", "Value", "Verdict"))
         self.lot_result_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -1099,6 +1246,8 @@ class Fc22TesterPage(QWidget):
         self._save_current()
         self.session = self.store.new_session()
         self._apply_session_to_ui()
+        if self._live_device_info and self._live_device_info.connected:
+            self.set_device_info(self._live_device_info)
         self.current_pdf = None
         self._update_session_label()
 
@@ -1220,6 +1369,10 @@ class Fc22TesterPage(QWidget):
         self._input_samples.clear()
         self._manual_overrides.clear()
         self._emwolf_armed = False
+        self._clear_observations()
+        if self.session:
+            self.session.emwolf_results.clear()
+        self.emwolf_feedback.setText("No confirmed EmWolf result in this session")
         if self._lot_engine is not None:
             self._lot_engine = TestLotEngine(self._lot_engine.lot, set(RUN_TEST_FIELD_KEYS))
             self._evaluate_lot({})
@@ -1227,6 +1380,7 @@ class Fc22TesterPage(QWidget):
     # --------------------------------------------------------- device identity
     def set_device_info(self, info: DeviceInfo) -> None:
         """Adopt the identity already read by the WolfEye DeviceService."""
+        self._live_device_info = copy.copy(info)
         if self.session is None:
             return
         old_identity = (self.session.dut_model, self.session.dut_ip, self.session.build)
@@ -1389,6 +1543,11 @@ class Fc22TesterPage(QWidget):
         if self.session is not None:
             widget = self.sender()
             for key, control in self.test_fields.items():
+                if control is widget and key in self.session.auto_readings:
+                    self.session.auto_readings.pop(key, None)
+                    self._reading_updated.pop(key, None)
+                    if key in self.session.auto_fields:
+                        self.session.auto_fields.remove(key)
                 if control is widget and key in self.session.test_results:
                     self.session.test_results[key] = {
                         **self.session.test_results[key], "status": "NOT_TESTED",
@@ -1424,7 +1583,7 @@ class Fc22TesterPage(QWidget):
         self.lot_result_status.setText(
             f"JSON Tests: {verdicts.count('PASS')} PASS / {verdicts.count('FAIL')} FAIL / "
             f"{verdicts.count('NOT_TESTED')} PENDING / {verdicts.count('INVALID')} INVALID"
-            if self.session.test_lot else "Test Lot: not loaded"
+            if self.session.test_lot else "Measured values fill automatically; select a Test Lot for acceptance verdicts"
         )
         self._refresh_lot_results_table()
         color = "#18864b" if filled == len(RUN_TEST_FIELD_KEYS) else "#a55b00"
@@ -1443,6 +1602,9 @@ class Fc22TesterPage(QWidget):
             return
         tests = self.session.test_lot.get("tests", [])
         rows = tuple((test["id"], test["report_field"]) for test in tests)
+        rows += tuple((f"Measured: {field}", field) for field in sorted(self.session.auto_readings))
+        rows += tuple((f"EmWolf: {point}", point) for point in sorted(self.session.emwolf_results)
+                      if point.endswith(".trip_time_ms"))
         if rows != self._lot_table_rows:
             self._lot_table_rows = rows
             self.lot_result_table.setRowCount(len(rows))
@@ -1450,8 +1612,14 @@ class Fc22TesterPage(QWidget):
                 self.lot_result_table.setItem(index, 0, QTableWidgetItem(test_id))
                 self.lot_result_table.setItem(index, 1, QTableWidgetItem("-"))
                 self.lot_result_table.setItem(index, 2, QTableWidgetItem("NOT TESTED"))
-        for index, (_, field) in enumerate(rows):
+        for index, (label, field) in enumerate(rows):
             result = self.session.test_results.get(field, {})
+            if label.startswith("Measured: "):
+                result = {**self.session.auto_readings[field], "status": "MEASURED",
+                          "reason": f"Observed from {self.session.auto_readings[field]['source']}; acceptance is defined by Test Lot"}
+            elif label.startswith("EmWolf: "):
+                result = {"value": self.session.emwolf_results[field], "status": "MEASURED",
+                          "reason": "Confirmed EWS2 feedback in milliseconds; acceptance is defined by Test Lot"}
             value = result.get("value")
             display_value = "-" if value is None else str(value)
             status = result.get("status", "NOT_TESTED")
@@ -1494,7 +1662,9 @@ class Fc22TesterPage(QWidget):
             f"Session {self.session.session_id} · operator {self.session.operator or '—'} · "
             f"DUT {self.session.dut_model or '—'} {self.session.dut_ip or '—'} · "
             f"software {self.session.firmware or '—'} · RUN TEST fields {filled}/{len(RUN_TEST_FIELD_KEYS)}. "
-            "The PDF uses current measured values. Automated verdicts and the exact rules "
+            f"AUTO readings {len(self.session.auto_readings)}; confirmed EmWolf scenarios "
+            f"{sum(point.endswith('.trip_time_ms') for point in self.session.emwolf_results)}. "
+            "The PDF uses recorded measurements. Automated verdicts and the exact rules "
             "are stored in session.json; missing and invalid measurements remain blank."
         )
         self.generate_button.setEnabled(True)
@@ -1536,7 +1706,7 @@ class Fc22TesterPage(QWidget):
     def _generate_form(self) -> None:
         if self.session is None:
             return
-        self._evaluate_lot({})
+        self._automation_tick()
         self._save_current()
         tests = self.session.test_lot.get("tests", [])
         complete = bool(self._lot_engine and tests
@@ -1620,5 +1790,6 @@ class Fc22TesterPage(QWidget):
     def shutdown(self) -> None:
         """Stop the bench listener and persist the operator-owned session."""
         self._lot_timer.stop()
+        self._refresh_timer.stop()
         self._stop_bench()
         self._save_current()

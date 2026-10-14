@@ -441,6 +441,7 @@ without overwhelming the setup/build guide.
 | `code/wolfeye/services/emwolf_protocol.py` | Defines EmWolf projects, setups, scenarios, analog outputs, EWS2 frame encoding/decoding, CRC, debouncing, SSH startup, and TCP connection handling. |
 | `code/wolfeye/services/emwolf_report.py` | Collects EmWolf execution results and generates branded PDF test reports. |
 | `code/wolfeye/services/fc22_session.py` | Persists each FC22 inspection session atomically and restores its form/test values. |
+| `code/wolfeye/services/fc22_autofill.py` | Maps actual DeviceService snapshots to 22 numeric and 3 boolean checklist fields using the company point names. Records observed values independently from acceptance verdicts. |
 | `code/wolfeye/services/fc22_test_lot.py` | Validates acceptance rules against BeachEye's point catalog and evaluates ranges, tolerances, stability, conditions, transitions and deadlines. Local inspection logic; no separate relay protocol. |
 | `code/wolfeye/services/fc22_input_adapters.py` | Receives explicit bench measurements with session/listener context and converts confirmed EmWolf trip results to checklist inputs. Does not command the relay. |
 | `code/wolfeye/services/fc22_form_pdf.py` | Fills the FC22AR or FC22S company PDF template using recorded inspection data. |
@@ -487,6 +488,7 @@ builds select a point map inside the same company source, not another DLL.
 | `tests/test_emwolf_protocol.py` | CRC, frames, scenarios, projects, debouncing, connection shutdown, and command construction. |
 | `tests/test_emwolf_report.py` | EmWolf run interpretation, digital-input transitions, reclose results, and generated PDFs. |
 | `tests/test_fc22_tester.py` | Session persistence, form PDF values, tester workflow, and shared device identity. |
+| `tests/test_fc22_autofill.py` | Lot-independent form filling, provenance, manual edits, unavailable values, identity/session resets, confirmed board feedback and shared EWS2 controls. |
 | `tests/test_fc22_test_lot.py` | Rule validation, unavailable/invalid values, distinct stability samples, transitions and late replies. |
 | `tests/test_fc22_input_adapters.py` | Authenticated bench framing, sequence/unit validation and confirmed EmWolf result mapping. |
 | `tests/test_fc22_lot_integration.py` | Company snapshots for both models/build generations, Qt callback isolation, manual edits/PDF warnings, disconnects, freshness and timer-driven timeouts. |

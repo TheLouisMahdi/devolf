@@ -138,6 +138,7 @@ class EmWolfPage(QWidget):
     log_window_requested = Signal()
     test_run_started = Signal(str)
     test_result = Signal(str, object)
+    board_state_changed = Signal(bool, str, int)
 
     def __init__(self) -> None:
         super().__init__()
@@ -163,6 +164,8 @@ class EmWolfPage(QWidget):
         self.bridge.trip.connect(self._record_trip)
         self._load_setup()
         self._refresh_scenarios(0)
+        self.host.textChanged.connect(lambda: self.publish_board_state())
+        self.port.valueChanged.connect(lambda: self.publish_board_state())
 
     def _apply_visual_style(self) -> None:
         root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
@@ -615,6 +618,23 @@ class EmWolfPage(QWidget):
         self.state_label.setText("Connected" if connected else "Disconnected")
         self.state_label.setStyleSheet("color:#087a20" if connected else "")
         self.connect_button.setText("Disconnect" if connected else "Connect")
+        self.host.setEnabled(not connected)
+        self.port.setEnabled(not connected)
+        self.board_state_changed.emit(connected, self.host.text().strip(), self.port.value())
+
+    def publish_board_state(self) -> None:
+        self.board_state_changed.emit(self.connection.connected, self.host.text().strip(), self.port.value())
+
+    def toggle_board_connection(self, host: str, port: int) -> None:
+        """Share the existing board connection with FC22 Tester controls."""
+        if not self.connection.connected:
+            self.host.setText(host)
+            self.port.setValue(port)
+        self._toggle_connection()
+
+    def run_project(self) -> None:
+        """Use the same commit, validation and EWS2 send path as the EmWolf tab."""
+        self._send()
 
     def set_device_info(self, info: DeviceInfo) -> None:
         """Use identity read by WolfEye LAN status without coupling wire protocols."""
