@@ -92,6 +92,17 @@ repository's nested legacy layouts and keeps one canonical application source.
   error reporting. Physical device reachability requires its actual IP/error;
   this software validation does not establish the current device's availability.
 
+## Updating company source during builds (2026-10-14)
+
+- Added -UpdateBeachEye to release builds, native-only builds and source
+  resolution. It selects the latest ver_50_remaster commit once and records
+  it after preparing the private checkout. Normal builds repeat the pin.
+- Updated the company pin to 18d5e16. SEF defaults now match 10 seconds for
+  both models. New upstream ROCOF struct attributes do not change serialized
+  Settings or JSON lists, so no new wire settings are assumed.
+- Added [guidebuild.txt](../guidebuild.txt) with English build commands and
+  source-update, runtime, output-name, wheelhouse and toolchain/cache options.
+
 ## Differences from `wolfeye`
 
 | Area | `wolfeye` branch | This branch |

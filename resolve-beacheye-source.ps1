@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param()
+param([switch]$UpdateBeachEye)
 
 $ErrorActionPreference = "Stop"
 
@@ -221,7 +221,7 @@ if (([string]($privacy.Output | Select-Object -Last 1)).Trim().ToLowerInvariant(
     throw "Refusing to use '$Repository': the BeachEye dependency must remain private."
 }
 
-$requestedRevision = $Commit
+$requestedRevision = if ($UpdateBeachEye) { $Branch } else { $Commit }
 $encodedRevision = [Uri]::EscapeDataString($requestedRevision)
 $remote = Invoke-NativeCommand $gh.Source @("api", "repos/$Repository/commits/$encodedRevision", "--jq", ".sha")
 if ($remote.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace(($remote.Output -join ""))) {
@@ -274,6 +274,15 @@ else {
         Remove-CacheDirectory $stagingPath
         throw
     }
+}
+
+if ($UpdateBeachEye -and $Commit -cne $remoteCommit) {
+    # Persist only after the exact checkout is ready. A failed lookup/download
+    # leaves the prior pin intact; one build never follows a moving branch twice.
+    $config.commit = $remoteCommit
+    $manifest = ($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine
+    [IO.File]::WriteAllText($configPath, $manifest, [Text.UTF8Encoding]::new($false))
+    Write-Host "Updated beacheye-source.json: $Commit -> $remoteCommit"
 }
 
 [PSCustomObject]@{

@@ -38,9 +38,9 @@ outside BeachEye's device `Settings` serialization lists exactly as upstream;
 the bridge exposes it to the desktop TCC session without inventing incompatible
 wire bytes.
 
-## Current BeachEye read/write authority (2026-10-13)
+## BeachEye read/write alignment (2026-10-13)
 
-The current dependency is company `ver_50_remaster` at
+The dependency selected at this synchronization was company `ver_50_remaster` at
 `222c24eb813b9798a5eab42a3fed501892f61f26`, verified against the branch head.
 The earlier `110dd0c` pin above records the previous synchronization state.
 The newest commit adds `GeneralElement.cmax`; it does not change the settings
@@ -228,6 +228,33 @@ Validation: native compilation succeeded and **120 tests passed in 127.032
 seconds**, including the full TCP INFO/settings service handshake and accurate
 failed-connect error reporting. All 200 local documentation links resolved.
 
+## Latest company source and update builds (2026-10-14)
+
+The current pin is **18d5e1696730c1167cae854f83d77eb0c20d9ac5**, checked against
+the company ver_50_remaster head. It includes d3b49da (SEF trip-time defaults
+corrected to 10,000 ms) and 18d5e16 (ROCOF structure/menu attributes). UI SEF
+defaults now match 10 seconds for both models. This update does not add ROCOF
+to company Settings serialization or JSON lists, so no new device bytes or
+ROCOF wire controls are invented by DEVolf.
+
+`-UpdateBeachEye` is supported by build.ps1, build-native.ps1 and
+resolve-beacheye-source.ps1. The resolver selects the branch head once, resolves
+an exact private checkout and updates the manifest after compatibility checks.
+Lookup/download/compatibility failures retain the previous pin. A later native
+compile or test failure stops the build but leaves the selected SHA recorded
+for investigation. Without the switch, the recorded SHA is reused. Repository
+and branch stay restricted to majidnow/BeachEye ver_50_remaster.
+
+See [the English build guide](../guidebuild.txt) for complete commands. Resolver
+transaction tests use isolated synthetic caches and fake GitHub/Git commands,
+without accessing real account credentials or private source.
+
+Validation: the update-capable native build compiled the selected 18d5e16
+checkout and **125 tests passed in 146.270 seconds**. All three PowerShell
+scripts and all 12 build examples passed syntax checks; all 204 local
+documentation links and the 60-entry company mapping were verified. The final
+application EXE was not built.
+
 ## Numeric master alignment (2026-10-13)
 
 The numeric editing behavior was audited against WolfEye `master` at the same
@@ -274,7 +301,7 @@ required headers. Active relay transport is implemented in the native adapter.
 Company master records BeachEye gitlink
 `23283b73478b61b244aa344a159d2ad671689bf4`. DEVolf does **not** check out that
 gitlink directly: [its dependency manifest](../beacheye-source.json) pins
-`222c24eb813b9798a5eab42a3fed501892f61f26` from `ver_50_remaster` for all
+`18d5e1696730c1167cae854f83d77eb0c20d9ac5` from `ver_50_remaster` for all
 reported device builds. The authenticated
 resolver downloads that revision outside the repository. Files inside that separate
 submodule repository are not entries of the WolfEye master tree counted here.
@@ -439,8 +466,9 @@ builds select a point map inside the same company source, not another DLL.
 | File | Responsibility |
 | --- | --- |
 | `build.ps1` | Builds the x64 release, checks Python and packaged EXE architecture, runs all tests, packages a one-file EXE, and smoke-tests the result. |
-| `build-native.ps1` | Builds the pinned ver_50_remaster DLL with MSYS2 UCRT64 GCC/Ninja. |
-| `resolve-beacheye-source.ps1` | Requires GitHub CLI authentication, verifies that BeachEye is private, resolves pinned commits, and maintains an external private cache. |
+| `build-native.ps1` | Builds the ver_50_remaster DLL with MSYS2 UCRT64 GCC/Ninja; optionally updates its pin with -UpdateBeachEye. |
+| `resolve-beacheye-source.ps1` | Requires GitHub CLI authentication, verifies privacy, resolves a recorded or latest branch commit, and maintains an external private cache. |
+| `guidebuild.txt` | English reference for full/native-only builds, company updates, runtimes, wheelhouses and private cache options. |
 | `requirements.txt` | Pinned Python 3.11 x64 dependencies for the Windows release. |
 | `beacheye-source.json` | Records the private repository identifier, selected branch and immutable commit ID used by the resolver. |
 | `.gitattributes` | Repository file and line-ending attributes. |
@@ -451,6 +479,7 @@ builds select a point map inside the same company source, not another DLL.
 | File | Coverage |
 | --- | --- |
 | `tests/test_device_service.py` | Native/legacy connection selection, fallback, request routing, write status, and update operations. |
+| `tests/test_build_source.py` | Source-pin/update selection, single branch lookup and manifest preservation on failed resolution/compatibility checks. |
 | `tests/test_native_bridge.py` | Native ABI, exact settings round trips, revision-specific measurement/event profiles, framing, and provider behavior. |
 | `tests/test_emwolf_protocol.py` | CRC, frames, scenarios, projects, debouncing, connection shutdown, and command construction. |
 | `tests/test_emwolf_report.py` | EmWolf run interpretation, digital-input transitions, reclose results, and generated PDFs. |

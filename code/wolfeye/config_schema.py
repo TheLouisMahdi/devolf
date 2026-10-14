@@ -223,7 +223,7 @@ def _tcc(
 def _protection_group() -> dict[str, Any]:
     oc = [_tcc(300, index == 0, index < 3) for index in range(6)]
     ef = [_tcc(240, index == 0, index < 3) for index in range(6)]
-    sef = [_tcc(15, False, index == 0, 300.0) for index in range(2)]
+    sef = [_tcc(15, False, index == 0, 10.0) for index in range(2)]
     sef[0]["ar_modes"] = ["LOCK"] * 4
     nps = [_tcc(120, False, index < 3) for index in range(6)]
     return {

@@ -2,6 +2,7 @@
 param(
     [ValidateNotNullOrEmpty()]
     [string]$Name = "DEVolf",
+    [switch]$UpdateBeachEye,
     [string]$PythonExecutable,
     [string]$Wheelhouse
 )
@@ -102,6 +103,7 @@ if ($pythonVersion -ne $pythonVersionRequired -or [int]$pythonBits -ne $pythonBi
 
 $nativeBuildArguments = @{}
 $nativeBuildArguments.OutputDirectory = $nativeDirectory
+$nativeBuildArguments.UpdateBeachEye = $UpdateBeachEye
 & $nativeBuildScript @nativeBuildArguments
 if (-not (Test-Path -LiteralPath $nativeDll -PathType Leaf)) {
     throw "Native BeachEye build did not produce: $nativeDll"

@@ -189,6 +189,16 @@ class NativeBridgeTests(unittest.TestCase):
             patch_settings_payload(encoded[:-3], settings, model), encoded[:-3]
         )
 
+    def test_latest_company_sef_defaults_match_ui_for_both_models(self) -> None:
+        ui = default_config()
+        for model in ("FC22AR", "FC22S"):
+            native = default_settings_json(model)
+            for index, group in enumerate(native["p"]["g"]):
+                for direction in ("f", "r"):
+                    self.assertEqual(group["sf"][direction]["tt"], 10000)
+                self.assertEqual([element["tripping_time_s"] for element in
+                                  ui["protection"]["groups"][index]["sef"]["elements"]], [10.0, 10.0])
+
     def test_legacy_json_shape_keeps_new_revision_defaults(self) -> None:
         settings = default_settings_json("FC22AR")
 

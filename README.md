@@ -37,6 +37,16 @@ Run from the repository root:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
+To fetch the latest company `ver_50_remaster` revision on each build:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -UpdateBeachEye
+```
+
+The update records the selected SHA in `beacheye-source.json`. Omitting the
+switch repeats that recorded SHA. See [guidebuild.txt](guidebuild.txt) for the
+English command reference, native-only builds and custom build options.
+
 **Output:** `Dist\DEVolf.exe`.
 
 The script creates `.venv` when needed, installs `requirements.txt`, builds
@@ -65,7 +75,8 @@ $env:DEVOLF_BEACHEYE_CACHE = 'D:\PrivateBuildCache\DEVolf-BeachEye'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-Source selection comes only from [the pinned manifest](beacheye-source.json).
+Normal builds use [the pinned manifest](beacheye-source.json); `-UpdateBeachEye`
+resolves the latest company branch commit and refreshes that pin.
 The resolver requires `majidnow/BeachEye` and `ver_50_remaster`; alternate
 repository, branch and revision build options have been removed.
 
@@ -80,8 +91,8 @@ tracked in this repository. The resolver applies desktop compatibility and
 lossless numeric-export transformations only to that external cache.
 
 All relay read/write, measurements and events use **BeachEye
-`ver_50_remaster`**, pinned to `222c24eb813b9798a5eab42a3fed501892f61f26`
-(branch head checked on 2026-10-13). A device reporting build 51 still uses
+`ver_50_remaster`**, currently pinned to `18d5e1696730c1167cae854f83d77eb0c20d9ac5`
+(branch head checked on 2026-10-14). A device reporting build 51 still uses
 this branch's `DisablePoints(model, build)` mapping; no separate revision-51
 DLL is selected. FC22AR build 51 uses 410 binary and 122 analog points in a
 300-byte packed BI/AI response.
@@ -183,3 +194,4 @@ named scenario folders.
 - [Numeric settings audit](docs/NUMERIC_SETTINGS_AUDIT.md) and [field inventory](docs/NUMERIC_SETTINGS_AUDIT.csv)
 - [Release notes](docs/RELEASE_NOTES.md)
 - [Public release checklist](docs/PUBLIC_RELEASE_CHECKLIST.md)
+- [English build command reference](guidebuild.txt)

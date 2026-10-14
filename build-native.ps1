@@ -1,5 +1,6 @@
 [CmdletBinding()]
 param(
+    [switch]$UpdateBeachEye,
     [string]$OutputDirectory
 )
 
@@ -67,13 +68,14 @@ function Invoke-NativeBuild(
     }
 }
 
-$sourceInfo = & $resolver
+$sourceInfo = & $resolver -UpdateBeachEye:$UpdateBeachEye
 if ($null -eq $sourceInfo -or -not (Test-Path -LiteralPath $sourceInfo.Path -PathType Container)) {
     throw "BeachEye source resolution did not return a valid directory."
 }
 
 Write-Host "Building BeachEye branch '$($sourceInfo.Branch)' from $($sourceInfo.SourceKind)."
 Write-Host "BeachEye source: $($sourceInfo.Path)"
+Write-Host "BeachEye commit: $($sourceInfo.Commit)"
 
 $previousPath = $env:PATH
 $env:PATH = "$toolchainBin;$previousPath"
