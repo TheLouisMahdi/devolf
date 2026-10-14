@@ -77,6 +77,21 @@ repository's nested legacy layouts and keeps one canonical application source.
   models and native/chunked service paths. Source selection remains the same
   pinned `ver_50_remaster`; no alternate dependency branch or DLL was added.
 
+## Connection reliability (2026-10-14)
+
+- Native TCP connects directly and obtains identity through company INFO;
+  optional HTTP identity is only probed for the legacy fallback. Unavailable
+  or malformed HTTP metadata no longer blocks the native handshake.
+- Stopping during HTTP discovery or TCP establishment prevents a late
+  successful connection from being published or used for requests.
+- Windows nonblocking connect checks both writable and exception socket sets
+  and reports the actual endpoint and Winsock error. The Python bridge retains
+  that detail instead of replacing it with a generic failure message.
+- Regression coverage includes a complete AR51 INFO/settings handshake over
+  localhost TCP, cancellation, text-valued legacy identity and failed socket
+  error reporting. Physical device reachability requires its actual IP/error;
+  this software validation does not establish the current device's availability.
+
 ## Differences from `wolfeye`
 
 | Area | `wolfeye` branch | This branch |

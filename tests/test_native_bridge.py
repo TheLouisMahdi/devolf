@@ -733,6 +733,71 @@ class NativeBridgeTests(unittest.TestCase):
         self.assertEqual(received, [(0x01, b"\x03")])
         self.assertIn((PROVIDER_RESPONSE, 11, 0x05, b"legacy"), events)
 
+    def test_failed_connection_reports_endpoint_and_winsock_error(self) -> None:
+        # Keep a bound but non-listening socket so the target cannot race with
+        # another service between choosing the port and testing the refusal.
+        reservation = socket.socket()
+        reservation.bind(("127.0.0.1", 0))
+        port = reservation.getsockname()[1]
+        provider = NativeDataProvider(lambda *_args: None)
+        try:
+            # Windows can time out before completing its refusal retries.
+            with self.assertRaisesRegex(OSError, f"127.0.0.1:{port}.*Winsock (10060|10061)") as caught:
+                provider.start("127.0.0.1", port, timeout_ms=2000)
+            self.assertIn("timed out" if "10060" in str(caught.exception) else "refused", str(caught.exception))
+        finally:
+            provider.close()
+            reservation.close()
+
+    def test_device_service_connects_and_reads_info_settings_without_http(self) -> None:
+        from wolfeye.services.device_service import DeviceService, CONNECTION_NATIVE
+        info = bytes((1, 100, 2, 2)) + struct.pack("<HH", 51, 0) + b"commit51"
+        settings = default_settings_file("FC22AR")[:-3]
+        listener = socket.socket()
+        listener.settimeout(3)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        completed, release = threading.Event(), threading.Event()
+        received, errors = [], []
+        service = DeviceService()
+        original_response = service._handle_native_response
+        def response(command, frame_type, payload):
+            original_response(command, frame_type, payload)
+            if command == "settings":
+                received.append(payload)
+                completed.set()
+        def server():
+            try:
+                with listener.accept()[0] as connection:
+                    connection.settimeout(3)
+                    for expected_kind, body in ((5, info), (3, settings)):
+                        kind, request = decode_native_frame(self._recv_frame(connection))
+                        if kind != expected_kind:
+                            raise AssertionError((kind, expected_kind))
+                        connection.sendall(build_native_frame(1, request[:1] + body))
+                    release.wait(3)
+            except BaseException as exc:
+                errors.append(exc)
+        worker = threading.Thread(target=server, daemon=True)
+        worker.start()
+        try:
+            with patch("wolfeye.services.device_service.WOLFEYE_PORT", listener.getsockname()[1]), patch.object(
+                service, "_try_http_info", side_effect=AssertionError("Native must not use HTTP")
+            ), patch.object(service, "_handle_native_response", side_effect=response):
+                service._connect_worker("127.0.0.1", CONNECTION_NATIVE)
+                self.assertTrue(completed.wait(3), "INFO/settings handshake timed out")
+                self.assertTrue(service.connected)
+                self.assertTrue(service._handshake_complete)
+                self.assertEqual((service.info.model, service.info.build, service.info.firmware), ("FC22AR", 51, 100))
+                self.assertEqual(received, [settings])
+        finally:
+            release.set()
+            service.disconnect_device()
+            service._provider.close()
+            listener.close()
+            worker.join(3)
+        self.assertFalse(errors)
+
     def test_native_provider_owns_complete_update_flow(self) -> None:
         body = b"prefix DFHB-VER=FC22AR.1.3.50.commit\0firmware"
         image = body + struct.pack("<H", crc_hqx(body, 0xFFFF))

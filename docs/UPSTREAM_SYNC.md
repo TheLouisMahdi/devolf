@@ -204,6 +204,30 @@ final DLL also decoded the real capture correctly in all 12 model/build
 combinations. All 60 mapping entries and 200 local documentation links were
 verified. The final EXE remains for the user to build.
 
+## Connection verification (2026-10-14)
+
+Native connection now starts TCP directly and obtains its model/firmware/build
+from the company INFO response, without requiring an HTTP probe beforehand.
+Legacy fallback retains its optional HTTP discovery and normalizes text-valued
+firmware/hardware fields. Cancellation is checked after discovery and after
+TCP start, preventing a stopped attempt from becoming a live connection.
+
+The Windows adapter monitors both writable and exception fd sets during
+nonblocking connect, checks SO_ERROR and returns IP, port, error category and
+Winsock code. Python preserves the native message. No networking settings or
+device configuration are changed by this correction.
+
+A localhost relay simulator verifies actual DeviceService startup, AR51 INFO,
+sequenced settings request and byte-exact settings delivery without HTTP.
+Tests also cover cancellation and endpoint/error reporting. The device's
+current IP/error was not supplied during this investigation, so actual network
+reachability and the cause of the reported physical connection failure remain
+unverified. No final EXE was built.
+
+Validation: native compilation succeeded and **120 tests passed in 127.032
+seconds**, including the full TCP INFO/settings service handshake and accurate
+failed-connect error reporting. All 200 local documentation links resolved.
+
 ## Numeric master alignment (2026-10-13)
 
 The numeric editing behavior was audited against WolfEye `master` at the same

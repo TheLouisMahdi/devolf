@@ -238,6 +238,44 @@ class DeviceServiceTests(unittest.TestCase):
         self.assertEqual(self.service.info.transport, "NATIVE TCP:6536")
         self.assertEqual(self.provider.requests[-1], (1, FRAME_INFO, b""))
 
+    def test_native_handshake_does_not_depend_on_http(self) -> None:
+        self.service.info.connected = False
+        with patch.object(self.service, "_try_http_info", side_effect=AssertionError("HTTP must not run")):
+            self.service._connect_worker("192.168.1.10", CONNECTION_NATIVE)
+        self.assertEqual(self.provider.starts, [("192.168.1.10", 6536, False)])
+        self.assertEqual(self.provider.requests, [(1, FRAME_INFO, b"")])
+
+    def test_stop_during_legacy_http_probe_prevents_tcp_start(self) -> None:
+        self.service.info.connected = False
+        def canceled_probe(_ip):
+            self.service._stop.set()
+            return None
+        with patch.object(self.service, "_try_http_info", side_effect=canceled_probe):
+            self.service._connect_worker("192.168.1.10", CONNECTION_LEGACY)
+        self.assertEqual(self.provider.starts, [])
+        self.assertFalse(self.service.connected)
+
+    def test_stop_during_tcp_start_prevents_late_connection(self) -> None:
+        self.service.info.connected = False
+        original_start = self.provider.start
+        def canceled_start(*args, **kwargs):
+            original_start(*args, **kwargs)
+            self.service._stop.set()
+        with patch.object(self.provider, "start", side_effect=canceled_start):
+            self.service._connect_worker("192.168.1.10", CONNECTION_NATIVE)
+        self.assertTrue(self.provider.stopped)
+        self.assertFalse(self.service.connected)
+        self.assertEqual(self.provider.requests, [])
+
+    def test_legacy_text_identity_does_not_prevent_tcp_connection(self) -> None:
+        self.service.info.connected = False
+        with patch.object(self.service, "_try_http_info", return_value={
+            "model": "FC22AR", "firmware": "V100", "hardware": "HW 2", "build": "V51"
+        }):
+            self.service._connect_worker("192.168.1.10", CONNECTION_LEGACY)
+        self.assertEqual(self.provider.starts, [("192.168.1.10", 6536, True)])
+        self.assertEqual((self.service.info.firmware, self.service.info.hardware), (100, 2))
+
     def test_legacy_mode_without_http_uses_unsequenced_tcp(self) -> None:
         self.service.info.connected = False
         self.service._try_http_info = lambda _ip: None  # type: ignore[method-assign]

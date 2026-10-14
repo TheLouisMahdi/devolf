@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <filesystem>
@@ -92,32 +93,58 @@ public:
         }
 
         SOCKET connected = INVALID_SOCKET;
+        int connection_error = WSAECONNREFUSED;
         for (addrinfo* address = addresses; address; address = address->ai_next) {
             SOCKET candidate = socket(address->ai_family, address->ai_socktype, address->ai_protocol);
-            if (candidate == INVALID_SOCKET) continue;
+            if (candidate == INVALID_SOCKET) {
+                connection_error = WSAGetLastError();
+                continue;
+            }
             u_long nonblocking = 1;
             ioctlsocket(candidate, FIONBIO, &nonblocking);
             const int result = connect(candidate, address->ai_addr, static_cast<int>(address->ai_addrlen));
-            if (result == 0 || WSAGetLastError() == WSAEWOULDBLOCK) {
+            if (result == 0) {
+                connected = candidate;
+            } else if ((connection_error = WSAGetLastError()) == WSAEWOULDBLOCK) {
                 fd_set writable;
+                fd_set failed;
                 FD_ZERO(&writable);
+                FD_ZERO(&failed);
                 FD_SET(candidate, &writable);
+                FD_SET(candidate, &failed);
                 timeval timeout{
                     static_cast<long>(timeout_ms / 1000),
                     static_cast<long>((timeout_ms % 1000) * 1000),
                 };
-                if (select(0, nullptr, &writable, nullptr, &timeout) > 0) {
+                const int selected = select(0, nullptr, &writable, &failed, &timeout);
+                if (selected > 0) {
                     int error = 0;
                     int length = sizeof(error);
-                    getsockopt(candidate, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&error), &length);
-                    if (!error) connected = candidate;
+                    if (getsockopt(candidate, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&error), &length) != 0) {
+                        connection_error = WSAGetLastError();
+                    } else if (!error) {
+                        connected = candidate;
+                    } else {
+                        connection_error = error;
+                    }
+                } else {
+                    connection_error = selected == 0 ? WSAETIMEDOUT : WSAGetLastError();
                 }
             }
             if (connected != INVALID_SOCKET) break;
             closesocket(candidate);
         }
         freeaddrinfo(addresses);
-        if (connected == INVALID_SOCKET) return fail("Native TCP connection failed.");
+        if (connected == INVALID_SOCKET) {
+            const char* reason = connection_error == WSAECONNREFUSED ? "connection refused" :
+                connection_error == WSAETIMEDOUT ? "connection timed out" :
+                connection_error == WSAEHOSTUNREACH ? "device address unreachable" :
+                connection_error == WSAENETUNREACH ? "network unreachable" : "socket error";
+            char message[256]{};
+            std::snprintf(message, sizeof(message), "Cannot connect to %s:%u: %s (Winsock %d).",
+                          ip, static_cast<unsigned>(port), reason, connection_error);
+            return fail(message);
+        }
 
         u_long blocking = 0;
         ioctlsocket(connected, FIONBIO, &blocking);

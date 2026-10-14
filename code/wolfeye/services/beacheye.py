@@ -258,6 +258,7 @@ class NativeDataProvider:
         self, callback: Callable[[int, int, int, bytes], None]
     ) -> None:
         self._on_event = callback
+        self._last_error = ""
 
         @_ProviderCallback
         def receive(
@@ -269,6 +270,8 @@ class NativeDataProvider:
             size: int,
         ) -> None:
             payload = ct.string_at(data, size) if data and size else b""
+            if event == PROVIDER_ERROR:
+                self._last_error = payload.decode("utf-8", errors="replace")
             self._on_event(event, tag, value, payload)
 
         self._callback = receive
@@ -283,6 +286,7 @@ class NativeDataProvider:
         timeout_ms: int = 5000,
         legacy_protocol: bool = False,
     ) -> None:
+        self._last_error = ""
         if _native().be_provider_start(
             self._handle,
             ip.encode("ascii"),
@@ -290,7 +294,7 @@ class NativeDataProvider:
             timeout_ms,
             int(legacy_protocol),
         ) < 0:
-            raise OSError("Native TCP connection failed")
+            raise OSError(self._last_error or "Native TCP connection failed")
 
     def stop(self) -> None:
         if self._handle:

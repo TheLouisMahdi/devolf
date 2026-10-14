@@ -303,7 +303,11 @@ class DeviceService(QObject):
             self._handshake_complete = False
         self.message.emit(f"Connecting to {ip} using {mode}...", "info")
 
-        http_info = self._try_http_info(ip)
+        # The company Native handshake reads identity through TCP INFO.
+        # An unavailable/proxied HTTP endpoint must not delay or prevent it.
+        http_info = self._try_http_info(ip) if mode == CONNECTION_LEGACY else None
+        if self._stop.is_set():
+            raise OSError("connection was cancelled")
         build = (
             normalize_device_revision(
                 http_info.get("build", http_info.get("revision", 0))
@@ -316,8 +320,8 @@ class DeviceService(QObject):
             if http_info
             else "WolfEye"
         )
-        firmware = int(http_info.get("firmware", 0)) if http_info else 0
-        hardware = int(http_info.get("hardware", 0)) if http_info else 0
+        firmware = normalize_device_revision(http_info.get("firmware", 0)) if http_info else 0
+        hardware = normalize_device_revision(http_info.get("hardware", 0)) if http_info else 0
 
         if mode == CONNECTION_LEGACY and self._uses_legacy_http(http_info, build):
             self._connect_legacy_http(ip, model, firmware, hardware, build)
@@ -333,6 +337,9 @@ class DeviceService(QObject):
         finally:
             with self._connection_lock:
                 self._startup_in_progress = False
+        if self._stop.is_set():
+            self._provider.stop()
+            raise OSError("connection was cancelled")
         self.info = DeviceInfo(
             ip=ip,
             model=model,
