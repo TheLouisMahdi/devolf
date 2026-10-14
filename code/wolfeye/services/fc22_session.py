@@ -64,6 +64,9 @@ class Fc22Session:
     auto_fields: list[str] = field(default_factory=list)
     auto_readings: dict[str, dict[str, object]] = field(default_factory=dict)
     emwolf_results: dict[str, object] = field(default_factory=dict)
+    instruction_spec: dict[str, object] = field(default_factory=dict)
+    instruction_results: dict[str, dict[str, object]] = field(default_factory=dict)
+    instruction_fields: list[str] = field(default_factory=list)
 
     note: str = ""
 
@@ -136,6 +139,9 @@ class Fc22SessionStore:
             "auto_fields": list(self.session.auto_fields),
             "auto_readings": dict(self.session.auto_readings),
             "emwolf_results": dict(self.session.emwolf_results),
+            "instruction_spec": dict(self.session.instruction_spec),
+            "instruction_results": dict(self.session.instruction_results),
+            "instruction_fields": list(self.session.instruction_fields),
             "note": self.session.note,
         }
         temporary.write_text(
@@ -170,6 +176,9 @@ class Fc22SessionStore:
             auto_fields=list(payload.get("auto_fields", [])),
             auto_readings=dict(payload.get("auto_readings", {})),
             emwolf_results=dict(payload.get("emwolf_results", {})),
+            instruction_spec=dict(payload.get("instruction_spec", {})),
+            instruction_results=dict(payload.get("instruction_results", {})),
+            instruction_fields=list(payload.get("instruction_fields", [])),
             note=str(payload.get("note", "")),
         )
         self.session = session

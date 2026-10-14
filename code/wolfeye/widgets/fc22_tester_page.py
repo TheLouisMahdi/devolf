@@ -71,6 +71,8 @@ from wolfeye.models import DeviceInfo
 from wolfeye.widgets.fc22_lot_editor import TestLotEditorDialog
 from wolfeye.services.fc22_input_adapters import BenchTcpAdapter, validate_bench_lot_source
 from wolfeye.services.fc22_autofill import snapshot_readings
+from wolfeye.services.fc22_instruction import load_instruction, validate_instruction
+from wolfeye.widgets.fc22_instruction_dialog import InstructionDialog
 from wolfeye.services.emwolf_protocol import DEFAULT_HOST, DEFAULT_PORT
 from wolfeye.services.fc22_form_pdf import fill_form
 from wolfeye.services.fc22_session import Fc22Session, Fc22SessionStore
@@ -195,8 +197,8 @@ RUN_TEST_SECTIONS: tuple[TestSection, ...] = (
             _result("fault_phase_phase", "Fault · Phase-to-Phase"),
             _result("fault_phase_ground", "Fault · Phase-to-Ground"),
             _result("fault_phase_sync", "Fault · Phase Synchronization"),
-            _text("charging_voltage", "Battery Charging · Voltage (>25V)", "Enter measured voltage"),
-            _text("charging_current", "Battery Charging · Current (>700mA)", "Enter measured current"),
+            _text("charging_voltage", "Battery Charging · Voltage", "Enter measured voltage"),
+            _text("charging_current", "Battery Charging · Current", "Enter measured current"),
             _boolean("external_modem", "External Modem"),
         ),
     ),
@@ -280,6 +282,9 @@ class Fc22TesterPage(QWidget):
         self._reading_updated: dict[str, float] = {}
         self._live_device_info: DeviceInfo | None = None
         self._emwolf_connected = False
+        self._instruction_catalog = load_instruction()
+        self._instruction_snapshot = None
+        self._instruction_received = 0.0
         self._lot_table_rows: tuple[tuple[str, str], ...] = ()
         self._emwolf_armed = False
         self._manual_overrides: set[str] = set()
@@ -426,6 +431,7 @@ class Fc22TesterPage(QWidget):
         note.setWordWrap(True)
         layout.addWidget(dut_box)
         layout.addWidget(self._build_emwolf_controls())
+        layout.addWidget(self._build_instruction_settings())
         layout.addWidget(self._build_lot_settings())
         bench = self._build_bench_settings()
         bench.setVisible(False)
@@ -541,6 +547,104 @@ class Fc22TesterPage(QWidget):
         grid.addWidget(configure_button, 4, 3, 1, 2)
         self._refresh_lot_settings()
         return group
+
+    def _build_instruction_settings(self) -> QWidget:
+        group = QGroupBox("WI03 · Company test procedure")
+        layout = QHBoxLayout(group)
+        self.instruction_case = QComboBox()
+        self.instruction_case.setMinimumWidth(220)
+        self.instruction_status = QLabel()
+        self.instruction_status.setWordWrap(True)
+        run = QPushButton("Open test worksheet")
+        run.clicked.connect(self._open_instruction_case)
+        load = QPushButton("Load procedure JSON")
+        load.clicked.connect(self._load_instruction_dialog)
+        layout.addWidget(self.instruction_case, 2)
+        layout.addWidget(run)
+        layout.addWidget(load)
+        layout.addWidget(self.instruction_status, 1)
+        return group
+
+    def _refresh_instruction_settings(self) -> None:
+        if not hasattr(self, "instruction_case"):
+            return
+        model = self.session.dut_model if self.session and self.session.dut_model else self.model_switch.currentText()
+        previous = self.instruction_case.currentData()
+        self.instruction_case.clear()
+        for case in self._instruction_catalog["cases"]:
+            if model in case["models"]:
+                self.instruction_case.addItem(f"{case['board']} · {case['title']}", case["id"])
+        index = self.instruction_case.findData(previous)
+        if index >= 0:
+            self.instruction_case.setCurrentIndex(index)
+        doc = self._instruction_catalog["document"]
+        count = len(self.session.instruction_results) if self.session else 0
+        self.instruction_status.setText(f"{doc['code']} rev {doc['revision']} · {count} recorded modes")
+
+    def _load_instruction_dialog(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Load company procedure", str(Path(__file__).resolve().parents[2] / "test_lots"), "JSON files (*.json)")
+        if path:
+            try:
+                self._instruction_catalog = load_instruction(path)
+                self._refresh_instruction_settings()
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                QMessageBox.warning(self, "Invalid procedure", str(exc))
+
+    def _instruction_current_snapshot(self):
+        if (self._instruction_snapshot is not None and self._live_device_info and self._live_device_info.connected
+                and time.monotonic() - self._instruction_received <= 30):
+            return self._live_device_info.model, self._instruction_snapshot
+        return None
+
+    def _open_instruction_case(self) -> None:
+        if self.session is None:
+            return
+        self._save_current()
+        case_id = self.instruction_case.currentData()
+        case = next((case for case in self._instruction_catalog["cases"] if case["id"] == case_id), None)
+        if case is None:
+            return
+        dialog = InstructionDialog(self._instruction_catalog, case, self.session.dut_model,
+                                   self._instruction_current_snapshot, parent=self)
+        identity = [self.session.dut_model, self.session.dut_ip, self.session.build]
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.record:
+            if identity != [self.session.dut_model, self.session.dut_ip, self.session.build]:
+                QMessageBox.warning(self, "DUT changed", "DUT identity changed during the test. Start this worksheet again.")
+                return
+            self._save_instruction_record(dialog.record)
+
+    def _save_instruction_record(self, record: dict) -> None:
+        if record["model"] != self.session.dut_model:
+            raise ValueError("Recorded test model does not match this session")
+        self.session.instruction_spec = copy.deepcopy(self._instruction_catalog)
+        record["dut_identity"] = [self.session.dut_model, self.session.dut_ip, self.session.build]
+        self.session.instruction_results[record["case"]["id"]] = record
+        fields = {field.key: field for section in RUN_TEST_SECTIONS for field in section.fields}
+        updated = set()
+        for row in record["case"]["checks"]:
+            result = record["results"][row["id"]]
+            if result.get("value") is None or result["status"] not in ("PASS", "FAIL"):
+                continue
+            for key in row.get("form_fields", []):
+                if key not in fields:
+                    continue
+                if fields[key].kind == "result":
+                    value = result["status"] if result["status"] in ("PASS", "FAIL") else "UNKNOWN"
+                elif fields[key].kind == "boolean":
+                    value = str(result["value"])
+                else:
+                    value = f"{result['value']} {row['unit']}"
+                self.session.test_data[key] = value
+                self.session.auto_readings.pop(key, None)
+                self._reading_updated.pop(key, None)
+                if key not in self.session.instruction_fields:
+                    self.session.instruction_fields.append(key)
+                if key in self.session.auto_fields:
+                    self.session.auto_fields.remove(key)
+                updated.add(key)
+        self._update_observation_widgets(updated)
+        self._refresh_instruction_settings()
+        self.store.save()
 
     def _build_bench_settings(self) -> QWidget:
         group = QGroupBox("External Test Bench | JSON TCP")
@@ -764,6 +868,11 @@ class Fc22TesterPage(QWidget):
         if not chosen:
             return
         try:
+            raw = json.loads(Path(chosen).read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and raw.get("format") == "fc22_instruction":
+                self._instruction_catalog = validate_instruction(raw)
+                self._refresh_instruction_settings()
+                return
             self._activate_lot(load_lot(chosen, set(RUN_TEST_FIELD_KEYS)), Path(chosen))
         except (OSError, ValueError, TypeError) as exc:
             QMessageBox.warning(self, "Invalid test lot", str(exc))
@@ -883,6 +992,7 @@ class Fc22TesterPage(QWidget):
 
     def _apply_observations(self, readings: dict[str, dict[str, object]]) -> None:
         controlled = {test["report_field"] for test in self.session.test_lot.get("tests", [])}
+        controlled.update(self.session.instruction_fields)
         changed = set(self.session.auto_readings) - set(readings)
         for key in changed:
             self.session.auto_readings.pop(key, None)
@@ -930,6 +1040,8 @@ class Fc22TesterPage(QWidget):
             self._live_device_info.model, self._live_device_info.ip, str(self._live_device_info.build or "")
         ):
             return
+        self._instruction_snapshot = copy.deepcopy(snapshot)
+        self._instruction_received = time.monotonic()
         self._apply_observations(snapshot_readings(snapshot))
         if self._lot_engine is None or self.session.dut_model != self._lot_engine.lot["device_model"]:
             return
@@ -994,6 +1106,8 @@ class Fc22TesterPage(QWidget):
             self.session.test_results[key] = current
             changed_fields.add(key)
             field = fields[key]
+            if key in self.session.instruction_fields:
+                continue
             if key in self.session.auto_fields:
                 self.session.test_data.pop(key, None)
             if result.status in ("PASS", "FAIL") and result.value is not None:
@@ -1269,6 +1383,7 @@ class Fc22TesterPage(QWidget):
     def _apply_session_to_ui(self) -> None:
         if self.session is None:
             return
+        self._instruction_snapshot = None
         self._loading = True
         try:
             self.operator_edit.setText(self.session.operator)
@@ -1295,6 +1410,8 @@ class Fc22TesterPage(QWidget):
         finally:
             self._loading = False
         self._restore_lot()
+        self._instruction_catalog = validate_instruction(self.session.instruction_spec) if self.session.instruction_spec else load_instruction()
+        self._refresh_instruction_settings()
         self._refresh_form_completeness()
         self._refresh_test_status()
 
@@ -1358,9 +1475,13 @@ class Fc22TesterPage(QWidget):
         changed = model != self.session.dut_model
         self.session.dut_model = model
         if changed:
+            for key in self.session.instruction_fields:
+                self.session.test_data.pop(key, None)
+            self.session.instruction_fields.clear()
             self._stop_bench()
             self._reset_lot_inputs()
         self.store.save()
+        self._refresh_instruction_settings()
 
     def _reset_lot_inputs(self) -> None:
         """A new DUT identity cannot inherit verified values from the old one."""
@@ -1369,6 +1490,7 @@ class Fc22TesterPage(QWidget):
         self._input_samples.clear()
         self._manual_overrides.clear()
         self._emwolf_armed = False
+        self._instruction_snapshot = None
         self._clear_observations()
         if self.session:
             self.session.emwolf_results.clear()
@@ -1415,12 +1537,17 @@ class Fc22TesterPage(QWidget):
             self._loading = False
         self.model_switch.setEnabled(not info.connected)
         new_identity = (self.session.dut_model, self.session.dut_ip, self.session.build)
+        if old_identity != new_identity:
+            for key in self.session.instruction_fields:
+                self.session.test_data.pop(key, None)
+            self.session.instruction_fields.clear()
         if old_identity != new_identity or was_connected != info.connected:
             self._stop_bench()
             self._reset_lot_inputs()
         self.store.save()
         self._refresh_form_completeness()
         self._refresh_lot_settings()
+        self._refresh_instruction_settings()
 
     # ------------------------------------------------ future DUT test input
     def apply_dut_test_values(self, values: Mapping[str, object]) -> None:
@@ -1543,6 +1670,14 @@ class Fc22TesterPage(QWidget):
         if self.session is not None:
             widget = self.sender()
             for key, control in self.test_fields.items():
+                if control is widget and key in self.session.instruction_fields:
+                    self.session.instruction_fields.remove(key)
+                    for record in self.session.instruction_results.values():
+                        for check in record["case"]["checks"]:
+                            if key in check.get("form_fields", []):
+                                result = record["results"][check["id"]]
+                                result["status"] = "NOT_TESTED"
+                                result["reason"] = "The mapped form field was edited manually after recording"
                 if control is widget and key in self.session.auto_readings:
                     self.session.auto_readings.pop(key, None)
                     self._reading_updated.pop(key, None)
@@ -1708,6 +1843,14 @@ class Fc22TesterPage(QWidget):
             return
         self._automation_tick()
         self._save_current()
+        if not self._instruction_complete():
+            answer = QMessageBox.question(
+                self, "Incomplete WI03 procedure",
+                "Some recorded WI03 modes have missing, failed or review-required checks. "
+                "The PDF contains recorded values and must not be treated as approved. Continue?",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
         tests = self.session.test_lot.get("tests", [])
         complete = bool(self._lot_engine and tests
                         and self.session.dut_model == self._lot_engine.lot["device_model"])
@@ -1734,6 +1877,18 @@ class Fc22TesterPage(QWidget):
             return
         self.current_pdf = output
         self.report_summary.setText(f"Checklist PDF: {output}")
+
+    def _instruction_complete(self) -> bool:
+        cases = {case["id"]: case for case in self._instruction_catalog["cases"]}
+        identity = [self.session.dut_model, self.session.dut_ip, self.session.build]
+        for record in self.session.instruction_results.values():
+            case = record["case"]
+            if (not record["setup_confirmed"] or record["model"] != self.session.dut_model
+                    or record.get("dut_identity") != identity or cases.get(case["id"]) != case):
+                return False
+            if any(record["results"].get(row["id"], {}).get("status") != "PASS" for row in case["checks"]):
+                return False
+        return True
 
     def _open_pdf(self) -> None:
         if self.current_pdf is None or not self.current_pdf.exists():

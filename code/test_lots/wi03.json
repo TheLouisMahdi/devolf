@@ -1,0 +1,2364 @@
+{
+  "format": "fc22_instruction",
+  "schema_version": 1,
+  "document": {
+    "code": "WI03",
+    "revision": "00",
+    "title": "دستورالعمل تست",
+    "date_jalali": "1403/01/25",
+    "page_count": 8,
+    "filename": "WI03 دستورالعمل تست.doc",
+    "sha256": "4ced9b973ff12307a0390400b95566a721fb79bb32eeeb9e8b6019e2360daea0"
+  },
+  "policies": {
+    "ambiguous_values": "retain_verbatim_and_require_review",
+    "missing_limits": "NOT_TESTED; never invent limits",
+    "setup_confirmation": "required for acceptance of the selected case",
+    "manual_observations": "explicitly identified; not device-verified",
+    "native_units": "only explicit verified conversions may be used",
+    "stimulus_execution": "reference values only; no automatic hardware commands or inferred calibration"
+  },
+  "cases": [
+    {
+      "id": "hmi_before_mcu",
+      "board": "HMI",
+      "title": "HMI before MCU assembly",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        2,
+        3
+      ],
+      "setup": "قبل از مونتاژ میکرو، ولتاژ خروجی U5 و رگولاتورهای REG1 و U3 با مولتی‌متر اندازه‌گیری شود؛ جریان‌کشی با منبع تغذیه بررسی شود.",
+      "inputs": [
+        {
+          "id": "supply",
+          "label": "DC input supply",
+          "unit": "VDC",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 5,
+            "absolute": 0.2
+          },
+          "source_expression": "Input 5±0.2 VDC"
+        }
+      ],
+      "checks": [
+        {
+          "id": "isolation_1",
+          "label": "DC-DC Isolation [1], first output",
+          "unit": "V",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 5,
+            "absolute": 0.3
+          },
+          "source_expression": "5±0.3 V"
+        },
+        {
+          "id": "isolation_2",
+          "label": "DC-DC Isolation [1], second output",
+          "unit": "V",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 5,
+            "absolute": 0.3
+          },
+          "source_expression": "5±0.3 V"
+        },
+        {
+          "id": "reg",
+          "label": "REG Output [2]",
+          "unit": "V",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.3,
+            "absolute": 0.1
+          },
+          "source_expression": "3.3±0.1 V"
+        },
+        {
+          "id": "ref",
+          "label": "REF Output [3]",
+          "unit": "V",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.3,
+            "absolute": 0.1
+          },
+          "source_expression": "3.3±0.1 V"
+        }
+      ]
+    },
+    {
+      "id": "hmi_interfaces",
+      "board": "HMI",
+      "title": "HMI interfaces after test firmware programming",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        2
+      ],
+      "setup": "میکرو مونتاژ، جامپر، باتری سکه‌ای، SD و LCD نصب و برنامه تست اولیه پروگرام شود. ارتباط‌ها و SD بررسی و سپس bootloader.hex و BeachWolf.hex پروگرام شوند.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "rs232",
+          "label": "RS232 text repeats and sending macro 1 increments the display",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        },
+        {
+          "id": "rs485",
+          "label": "RS485 text repeats and sending macro 1 increments the display",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        },
+        {
+          "id": "ethernet",
+          "label": "Ethernet ping response is displayed as specified in WI03",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        },
+        {
+          "id": "sd",
+          "label": "SD-Card row displays OK",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        },
+        {
+          "id": "main_firmware",
+          "label": "Main firmware starts and displays its first page",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        }
+      ],
+      "reference": {
+        "coin_cell": {
+          "value": 3,
+          "unit": "V"
+        },
+        "sd_card": {
+          "value": 2,
+          "unit": "G as written",
+          "source_expression": "SD CARD 2G"
+        },
+        "serial_baud_rate": 9600,
+        "serial_macro": 1,
+        "ping_command": "ping 192.168.137.10",
+        "example_reply": "Reply from 192.168.137.10: bytes=32 time<1ms TTL=255",
+        "example_reply_values": {
+          "bytes": 32,
+          "time": {
+            "operator": "lt",
+            "value": 1,
+            "unit": "ms"
+          },
+          "ttl": 255
+        },
+        "reply_note": "An example in WI03; bytes/time/TTL are not independent acceptance limits.",
+        "test_programmer": "STM32 ST-LINK Utility or equivalent",
+        "main_images": [
+          "bootloader.hex",
+          "BeachWolf.hex"
+        ]
+      }
+    },
+    {
+      "id": "fc22s_voltage_low",
+      "board": "Analog",
+      "title": "Sectionalizer voltage low",
+      "models": [
+        "FC22S"
+      ],
+      "pages": [
+        4
+      ],
+      "setup": "ورودی فانکشن ژنراتور در نقطه مشخص‌شده اعمال شود. ولتاژها با اسیلوسکوپ نسبت به GND پین‌های کانکتور HMI و با نمایشگر دستگاه ثبت شوند. فرکانس در هر دو نقطه ثبت شود.",
+      "inputs": [
+        {
+          "id": "generator_voltage",
+          "label": "Function generator voltage",
+          "unit": "V",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 1.63,
+            "absolute": 0.3
+          },
+          "source_expression": "1.63±0.3 V"
+        },
+        {
+          "id": "generator_frequency",
+          "label": "Function generator frequency",
+          "unit": "Hz",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 50,
+            "absolute": 0.2
+          },
+          "source_expression": "50Hz±0.2"
+        }
+      ],
+      "checks": [
+        {
+          "id": "va",
+          "label": "HMI Ua",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.2,
+            "absolute": 0.2
+          },
+          "source_expression": "3.2±0.2 kV",
+          "binding": {
+            "source": "analog.Ua",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "va"
+          ]
+        },
+        {
+          "id": "vb",
+          "label": "HMI Ub",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.2,
+            "absolute": 0.2
+          },
+          "source_expression": "3.2±0.2 kV",
+          "binding": {
+            "source": "analog.Ub",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "vb"
+          ]
+        },
+        {
+          "id": "vc",
+          "label": "HMI Uc",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.2,
+            "absolute": 0.2
+          },
+          "source_expression": "3.2±0.2 kV",
+          "binding": {
+            "source": "analog.Uc",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "vc"
+          ]
+        },
+        {
+          "id": "vr",
+          "label": "HMI Ur",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.2,
+            "absolute": 0.2
+          },
+          "source_expression": "3.2±0.2 kV",
+          "binding": {
+            "source": "analog.Ur",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "vr"
+          ]
+        },
+        {
+          "id": "vs",
+          "label": "HMI Us",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.2,
+            "absolute": 0.2
+          },
+          "source_expression": "3.2±0.2 kV",
+          "binding": {
+            "source": "analog.Us",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "vs"
+          ]
+        },
+        {
+          "id": "vt",
+          "label": "HMI Ut",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.2,
+            "absolute": 0.2
+          },
+          "source_expression": "3.2±0.2 kV",
+          "binding": {
+            "source": "analog.Ut",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "vt"
+          ]
+        },
+        {
+          "id": "scope_min",
+          "label": "Oscilloscope MIN relative to GND",
+          "unit": "mV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 200,
+            "absolute": 50
+          },
+          "source_expression": "200±50 mV"
+        },
+        {
+          "id": "scope_max",
+          "label": "Oscilloscope MAX relative to GND",
+          "unit": "V",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 1.12,
+            "absolute": 0.4
+          },
+          "source_expression": "1.12±0.4 V"
+        },
+        {
+          "id": "freq_source",
+          "label": "Frequency Source",
+          "unit": "Hz",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 50,
+            "absolute": 0.2
+          },
+          "source_expression": "50±0.2 Hz",
+          "form_fields": [
+            "freq_source"
+          ]
+        },
+        {
+          "id": "freq_load",
+          "label": "Frequency Load (WI03: Loud)",
+          "unit": "Hz",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 50,
+            "absolute": 0.2
+          },
+          "source_expression": "50±0.2 Hz",
+          "form_fields": [
+            "freq_load"
+          ]
+        }
+      ],
+      "reference": {
+        "voltage_menu": "Main menu>Measurments>Analog>Page2",
+        "frequency_menu": "Main menu>Measurments>Analog>Page13",
+        "frequency_binding_note": "Raw F ABC/F RST scaling is not established by WI03; enter verified Hz measurements.",
+        "waveform_amplitude_convention": "not specified in WI03; do not infer RMS/peak or DDS calibration"
+      }
+    },
+    {
+      "id": "fc22s_voltage_high",
+      "board": "Analog",
+      "title": "Sectionalizer voltage high",
+      "models": [
+        "FC22S"
+      ],
+      "pages": [
+        4
+      ],
+      "setup": "ورودی فانکشن ژنراتور در نقطه مشخص‌شده اعمال شود. ولتاژها با اسیلوسکوپ نسبت به GND پین‌های کانکتور HMI و با نمایشگر دستگاه ثبت شوند. فرکانس در هر دو نقطه ثبت شود.",
+      "inputs": [
+        {
+          "id": "generator_voltage",
+          "label": "Function generator voltage",
+          "unit": "V",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 2,
+            "absolute": 0.3
+          },
+          "source_expression": "2±0.3 V"
+        },
+        {
+          "id": "generator_frequency",
+          "label": "Function generator frequency",
+          "unit": "Hz",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 50,
+            "absolute": 0.2
+          },
+          "source_expression": "50Hz±0.2"
+        }
+      ],
+      "checks": [
+        {
+          "id": "va",
+          "label": "HMI Ua",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.9,
+            "absolute": 0.2
+          },
+          "source_expression": "3.9±0.2 kV",
+          "binding": {
+            "source": "analog.Ua",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "va"
+          ]
+        },
+        {
+          "id": "vb",
+          "label": "HMI Ub",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.9,
+            "absolute": 0.2
+          },
+          "source_expression": "3.9±0.2 kV",
+          "binding": {
+            "source": "analog.Ub",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "vb"
+          ]
+        },
+        {
+          "id": "vc",
+          "label": "HMI Uc",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.9,
+            "absolute": 0.2
+          },
+          "source_expression": "3.9±0.2 kV",
+          "binding": {
+            "source": "analog.Uc",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "vc"
+          ]
+        },
+        {
+          "id": "vr",
+          "label": "HMI Ur",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.9,
+            "absolute": 0.2
+          },
+          "source_expression": "3.9±0.2 kV",
+          "binding": {
+            "source": "analog.Ur",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "vr"
+          ]
+        },
+        {
+          "id": "vs",
+          "label": "HMI Us",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.9,
+            "absolute": 0.2
+          },
+          "source_expression": "3.9±0.2 kV",
+          "binding": {
+            "source": "analog.Us",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "vs"
+          ]
+        },
+        {
+          "id": "vt",
+          "label": "HMI Ut",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.9,
+            "absolute": 0.2
+          },
+          "source_expression": "3.9±0.2 kV",
+          "binding": {
+            "source": "analog.Ut",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "vt"
+          ]
+        },
+        {
+          "id": "scope_min",
+          "label": "Oscilloscope MIN relative to GND",
+          "unit": "mV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 100,
+            "absolute": 50
+          },
+          "source_expression": "100±50 mV"
+        },
+        {
+          "id": "scope_max",
+          "label": "Oscilloscope MAX relative to GND",
+          "unit": "V",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 1.24,
+            "absolute": 0.4
+          },
+          "source_expression": "1.24±0.4 V"
+        },
+        {
+          "id": "freq_source",
+          "label": "Frequency Source",
+          "unit": "Hz",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 50,
+            "absolute": 0.2
+          },
+          "source_expression": "50±0.2 Hz",
+          "form_fields": [
+            "freq_source"
+          ]
+        },
+        {
+          "id": "freq_load",
+          "label": "Frequency Load (WI03: Loud)",
+          "unit": "Hz",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 50,
+            "absolute": 0.2
+          },
+          "source_expression": "50±0.2 Hz",
+          "form_fields": [
+            "freq_load"
+          ]
+        }
+      ],
+      "reference": {
+        "voltage_menu": "Main menu>Measurments>Analog>Page2",
+        "frequency_menu": "Main menu>Measurments>Analog>Page13",
+        "frequency_binding_note": "Raw F ABC/F RST scaling is not established by WI03; enter verified Hz measurements.",
+        "waveform_amplitude_convention": "not specified in WI03; do not infer RMS/peak or DDS calibration"
+      }
+    },
+    {
+      "id": "fc22ar_voltage_low",
+      "board": "Analog",
+      "title": "Auto recloser voltage low",
+      "models": [
+        "FC22AR"
+      ],
+      "pages": [
+        5
+      ],
+      "setup": "ورودی فانکشن ژنراتور در نقطه مشخص‌شده اعمال شود. ولتاژها با اسیلوسکوپ نسبت به GND پین‌های کانکتور HMI و با نمایشگر دستگاه ثبت شوند. فرکانس در هر دو نقطه ثبت شود.",
+      "inputs": [
+        {
+          "id": "generator_voltage",
+          "label": "Function generator voltage",
+          "unit": "V",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 2.5,
+            "absolute": 0.3
+          },
+          "source_expression": "2.5±0.3 V"
+        },
+        {
+          "id": "generator_frequency",
+          "label": "Function generator frequency",
+          "unit": "Hz",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 50,
+            "absolute": 0.2
+          },
+          "source_expression": "50Hz±0.2"
+        }
+      ],
+      "checks": [
+        {
+          "id": "va",
+          "label": "HMI Ua",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.3,
+            "absolute": 0.2
+          },
+          "source_expression": "3.3±0.2 kV",
+          "binding": {
+            "source": "analog.Ua",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "va"
+          ]
+        },
+        {
+          "id": "vb",
+          "label": "HMI Ub",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.3,
+            "absolute": 0.2
+          },
+          "source_expression": "3.3±0.2 kV",
+          "binding": {
+            "source": "analog.Ub",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "vb"
+          ]
+        },
+        {
+          "id": "vc",
+          "label": "HMI Uc",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.3,
+            "absolute": 0.2
+          },
+          "source_expression": "3.3±0.2 kV",
+          "binding": {
+            "source": "analog.Uc",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "vc"
+          ]
+        },
+        {
+          "id": "vr",
+          "label": "HMI Ur",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.3,
+            "absolute": 0.2
+          },
+          "source_expression": "3.3±0.2 kV",
+          "binding": {
+            "source": "analog.Ur",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "vr"
+          ]
+        },
+        {
+          "id": "vs",
+          "label": "HMI Us",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.3,
+            "absolute": 0.2
+          },
+          "source_expression": "3.3±0.2 kV",
+          "binding": {
+            "source": "analog.Us",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "vs"
+          ]
+        },
+        {
+          "id": "vt",
+          "label": "HMI Ut",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.3,
+            "absolute": 0.2
+          },
+          "source_expression": "3.3±0.2 kV",
+          "binding": {
+            "source": "analog.Ut",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "vt"
+          ]
+        },
+        {
+          "id": "scope_min",
+          "label": "Oscilloscope MIN relative to GND",
+          "unit": "mV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 720,
+            "absolute": 50
+          },
+          "source_expression": "720±50 mV"
+        },
+        {
+          "id": "scope_max",
+          "label": "Oscilloscope MAX relative to GND",
+          "unit": "V",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 1.7,
+            "absolute": 0.4
+          },
+          "source_expression": "1.7±0.4 V"
+        },
+        {
+          "id": "freq_source",
+          "label": "Frequency Source",
+          "unit": "Hz",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 50,
+            "absolute": 0.2
+          },
+          "source_expression": "50±0.2 Hz",
+          "form_fields": [
+            "freq_source"
+          ]
+        },
+        {
+          "id": "freq_load",
+          "label": "Frequency Load (WI03: Loud)",
+          "unit": "Hz",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 50,
+            "absolute": 0.2
+          },
+          "source_expression": "50±0.2 Hz",
+          "form_fields": [
+            "freq_load"
+          ]
+        }
+      ],
+      "reference": {
+        "voltage_menu": "Main menu>Measurments>Analog>Page2",
+        "frequency_menu": "Main menu>Measurments>Analog>Page13",
+        "frequency_binding_note": "Raw F ABC/F RST scaling is not established by WI03; enter verified Hz measurements.",
+        "waveform_amplitude_convention": "not specified in WI03; do not infer RMS/peak or DDS calibration"
+      }
+    },
+    {
+      "id": "fc22ar_voltage_high",
+      "board": "Analog",
+      "title": "Auto recloser voltage high",
+      "models": [
+        "FC22AR"
+      ],
+      "pages": [
+        5
+      ],
+      "setup": "ورودی فانکشن ژنراتور در نقطه مشخص‌شده اعمال شود. ولتاژها با اسیلوسکوپ نسبت به GND پین‌های کانکتور HMI و با نمایشگر دستگاه ثبت شوند. فرکانس در هر دو نقطه ثبت شود.",
+      "inputs": [
+        {
+          "id": "generator_voltage",
+          "label": "Function generator voltage",
+          "unit": "V",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 5.2,
+            "absolute": 0.3
+          },
+          "source_expression": "5.2±0.3 V"
+        },
+        {
+          "id": "generator_frequency",
+          "label": "Function generator frequency",
+          "unit": "Hz",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 50,
+            "absolute": 0.2
+          },
+          "source_expression": "50Hz±0.2"
+        }
+      ],
+      "checks": [
+        {
+          "id": "va",
+          "label": "HMI Ua",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 7,
+            "absolute": 0.2
+          },
+          "source_expression": "7±0.2 kV",
+          "binding": {
+            "source": "analog.Ua",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "va"
+          ]
+        },
+        {
+          "id": "vb",
+          "label": "HMI Ub",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 7,
+            "absolute": 0.2
+          },
+          "source_expression": "7±0.2 kV",
+          "binding": {
+            "source": "analog.Ub",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "vb"
+          ]
+        },
+        {
+          "id": "vc",
+          "label": "HMI Uc",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 7,
+            "absolute": 0.2
+          },
+          "source_expression": "7±0.2 kV",
+          "binding": {
+            "source": "analog.Uc",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "vc"
+          ]
+        },
+        {
+          "id": "vr",
+          "label": "HMI Ur",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 7,
+            "absolute": 0.2
+          },
+          "source_expression": "7±0.2 kV",
+          "binding": {
+            "source": "analog.Ur",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "vr"
+          ]
+        },
+        {
+          "id": "vs",
+          "label": "HMI Us",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 7,
+            "absolute": 0.2
+          },
+          "source_expression": "7±0.2 kV",
+          "binding": {
+            "source": "analog.Us",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "vs"
+          ]
+        },
+        {
+          "id": "vt",
+          "label": "HMI Ut",
+          "unit": "kV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 7,
+            "absolute": 0.2
+          },
+          "source_expression": "7±0.2 kV",
+          "binding": {
+            "source": "analog.Ut",
+            "multiplier": 0.001,
+            "unit": "kV",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "vt"
+          ]
+        },
+        {
+          "id": "scope_min",
+          "label": "Oscilloscope MIN relative to GND",
+          "unit": "mV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 240,
+            "absolute": 50
+          },
+          "source_expression": "240±50 mV"
+        },
+        {
+          "id": "scope_max",
+          "label": "Oscilloscope MAX relative to GND",
+          "unit": "V",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 2.24,
+            "absolute": 0.4
+          },
+          "source_expression": "2.24±0.4 V"
+        },
+        {
+          "id": "freq_source",
+          "label": "Frequency Source",
+          "unit": "Hz",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 50,
+            "absolute": 0.2
+          },
+          "source_expression": "50±0.2 Hz",
+          "form_fields": [
+            "freq_source"
+          ]
+        },
+        {
+          "id": "freq_load",
+          "label": "Frequency Load (WI03: Loud)",
+          "unit": "Hz",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 50,
+            "absolute": 0.2
+          },
+          "source_expression": "50±0.2 Hz",
+          "form_fields": [
+            "freq_load"
+          ]
+        }
+      ],
+      "reference": {
+        "voltage_menu": "Main menu>Measurments>Analog>Page2",
+        "frequency_menu": "Main menu>Measurments>Analog>Page13",
+        "frequency_binding_note": "Raw F ABC/F RST scaling is not established by WI03; enter verified Hz measurements.",
+        "waveform_amplitude_convention": "not specified in WI03; do not infer RMS/peak or DDS calibration"
+      }
+    },
+    {
+      "id": "analog_phase_currents",
+      "board": "Analog",
+      "title": "Ia / Ib / Ic current test",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        5
+      ],
+      "setup": "ترانس جریان و برد مخصوص با سوویچ روی جریان موردنظر قرار گیرند. ابتدا از صفحه اصلی و سپس تفاضلی با اسیلوسکوپ از پین‌های کانکتور HMI ثبت شود.",
+      "inputs": [
+        {
+          "id": "transformer_input",
+          "label": "Transformer input",
+          "unit": "mV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 200,
+            "absolute": 10
+          },
+          "source_expression": "200±10 mV"
+        }
+      ],
+      "checks": [
+        {
+          "id": "ia",
+          "label": "HMI Ia",
+          "unit": "A",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 72,
+            "absolute": 5
+          },
+          "source_expression": "72±5 A",
+          "binding": {
+            "source": "analog.Ia",
+            "multiplier": 0.1,
+            "unit": "A",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "ia"
+          ]
+        },
+        {
+          "id": "ib",
+          "label": "HMI Ib",
+          "unit": "A",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 72,
+            "absolute": 5
+          },
+          "source_expression": "72±5 A",
+          "binding": {
+            "source": "analog.Ib",
+            "multiplier": 0.1,
+            "unit": "A",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "ib"
+          ]
+        },
+        {
+          "id": "ic",
+          "label": "HMI Ic",
+          "unit": "A",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 72,
+            "absolute": 5
+          },
+          "source_expression": "72±5 A",
+          "binding": {
+            "source": "analog.Ic",
+            "multiplier": 0.1,
+            "unit": "A",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "ic"
+          ]
+        },
+        {
+          "id": "scope_difference",
+          "label": "Oscilloscope differential current signal",
+          "unit": "mV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 610,
+            "absolute": 70
+          },
+          "source_expression": "610±70 Mv"
+        }
+      ]
+    },
+    {
+      "id": "analog_neutral_current",
+      "board": "Analog",
+      "title": "IN current test",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        5
+      ],
+      "setup": "ورودی ترانس اعمال و جریان IN از صفحه اصلی و سیگنال تفاضلی اسیلوسکوپ از پین‌های مشخص‌شده ثبت شود.",
+      "inputs": [
+        {
+          "id": "transformer_input",
+          "label": "Transformer input",
+          "unit": "mV",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 200,
+            "absolute": 10
+          },
+          "source_expression": "200±10 mV"
+        }
+      ],
+      "checks": [
+        {
+          "id": "in",
+          "label": "HMI IN",
+          "unit": "A",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 210,
+            "absolute": 40
+          },
+          "source_expression": "210±40 A",
+          "binding": {
+            "source": "analog.In",
+            "multiplier": 0.1,
+            "unit": "A",
+            "conversion_reference": "StatusPage.set_measurements"
+          },
+          "form_fields": [
+            "in"
+          ]
+        },
+        {
+          "id": "scope_difference",
+          "label": "Oscilloscope IN differential signal",
+          "unit": "V",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 2.7,
+            "absolute": 3.3
+          },
+          "source_expression": "2.7±3.3 V",
+          "requires_review": "Source value retained verbatim: tolerance exceeds nominal; operator requested review rather than automatic acceptance."
+        }
+      ]
+    },
+    {
+      "id": "keypad_indicators",
+      "board": "Keypad",
+      "title": "Indicators and shift register",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        3
+      ],
+      "setup": "Hidden>Indicators>ON؛ تمام LEDها، توالی چشمک‌زدن و روشن/خاموش شدن هنگام دستورات بررسی شوند. عملکرد کلیدها در تست پک برد بررسی شود.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "all_leds",
+          "label": "All indicators illuminate",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true",
+          "form_fields": [
+            "led_indicators"
+          ]
+        },
+        {
+          "id": "shift_register",
+          "label": "Blink timing and command-driven on/off sequence operate correctly",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        }
+      ]
+    },
+    {
+      "id": "keypad_battery_only",
+      "board": "Keypad",
+      "title": "Charger LED with battery only",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        3
+      ],
+      "setup": "فقط باتری متصل و AC قطع باشد؛ LED شارژر روشن باشد.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "charger_led",
+          "label": "Charger LED is on",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        }
+      ]
+    },
+    {
+      "id": "keypad_ac",
+      "board": "Keypad",
+      "title": "AC and charger LEDs with AC connected",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        3
+      ],
+      "setup": "AC متصل باشد؛ LED مربوط به AC روشن باشد. LED شارژر با توجه به نیاز باتری به شارژ روشن یا خاموش باشد؛ بدون باتری خاموش باشد.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "ac_led",
+          "label": "AC LED is on",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        },
+        {
+          "id": "charger_led_follows_battery",
+          "label": "Charger LED follows battery demand and is off without battery",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        }
+      ]
+    },
+    {
+      "id": "digital_fixture_off",
+      "board": "Digital",
+      "title": "GAS / mechanical lock fixture disconnected",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        6
+      ],
+      "setup": "سوکت تست جدا باشد؛ LEDهای GAS و M.L روشن و نمایشگر GAS.p>Fail و M.L>Lock باشد.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "gas_fail",
+          "label": "LCD displays GAS.p>Fail",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        },
+        {
+          "id": "mechanical_lock",
+          "label": "Mechanically Locked is true",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true",
+          "binding": {
+            "source": "binary.Mechanically Locked",
+            "multiplier": 1,
+            "unit": "boolean",
+            "conversion_reference": "native boolean measurement"
+          }
+        },
+        {
+          "id": "leds",
+          "label": "GAS and M.L LEDs are on",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        }
+      ]
+    },
+    {
+      "id": "digital_fixture_on",
+      "board": "Digital",
+      "title": "GAS / mechanical lock fixture connected",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        6
+      ],
+      "setup": "سوکت تست متصل شود؛ LEDها بدون تعلل خاموش و نمایشگر GAS.p>OK و M.L>UnLock باشد.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "gas_ok",
+          "label": "LCD displays GAS.p>OK",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true",
+          "form_fields": [
+            "di_gas"
+          ]
+        },
+        {
+          "id": "mechanical_unlock",
+          "label": "Mechanically Locked is false",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": false
+          },
+          "source_expression": "false",
+          "binding": {
+            "source": "binary.Mechanically Locked",
+            "multiplier": 1,
+            "unit": "boolean",
+            "conversion_reference": "native boolean measurement"
+          },
+          "form_fields": [
+            "di_lock"
+          ]
+        },
+        {
+          "id": "leds",
+          "label": "GAS and M.L LEDs turn off without delay",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        }
+      ]
+    },
+    {
+      "id": "digital_open",
+      "board": "Digital",
+      "title": "Digital open relay",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        5,
+        6
+      ],
+      "setup": "سوکت مخصوص ورودی/خروجی و کلید Keypad استفاده شوند. Open و Close همزمان یک وضعیت نداشته باشند. در حالت شبیه‌سازی فقط ارسال فرمان رله و پالس LED خروجی بررسی شود.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "relay_pulse",
+          "label": "Output LED briefly turns on then off and relay operates correctly",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true",
+          "form_fields": [
+            "do_trip"
+          ]
+        }
+      ],
+      "reference": {
+        "pulse_duration": "brief; WI03 gives no numerical duration limit",
+        "sectionalizer_fixture_gas_switch_led": "red and on throughout sectionalizer testing; distinct from DUT GAS fault LED"
+      }
+    },
+    {
+      "id": "digital_close",
+      "board": "Digital",
+      "title": "Digital close relay",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        5,
+        6
+      ],
+      "setup": "سوکت مخصوص ورودی/خروجی و کلید Keypad استفاده شوند. Open و Close همزمان یک وضعیت نداشته باشند. در حالت شبیه‌سازی فقط ارسال فرمان رله و پالس LED خروجی بررسی شود.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "relay_pulse",
+          "label": "Output LED briefly turns on then off and relay operates correctly",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true",
+          "form_fields": [
+            "do_close"
+          ]
+        }
+      ],
+      "reference": {
+        "pulse_duration": "brief; WI03 gives no numerical duration limit",
+        "sectionalizer_fixture_gas_switch_led": "red and on throughout sectionalizer testing; distinct from DUT GAS fault LED"
+      }
+    },
+    {
+      "id": "digital_battery_tester",
+      "board": "Digital",
+      "title": "Digital battery_tester relay",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        5,
+        6
+      ],
+      "setup": "سوکت مخصوص ورودی/خروجی و کلید Keypad استفاده شوند. Open و Close همزمان یک وضعیت نداشته باشند. در حالت شبیه‌سازی فقط ارسال فرمان رله و پالس LED خروجی بررسی شود.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "relay_pulse",
+          "label": "Output LED briefly turns on then off and relay operates correctly",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true",
+          "form_fields": [
+            "do_battery"
+          ]
+        }
+      ],
+      "reference": {
+        "pulse_duration": "brief; WI03 gives no numerical duration limit",
+        "sectionalizer_fixture_gas_switch_led": "red and on throughout sectionalizer testing; distinct from DUT GAS fault LED"
+      }
+    },
+    {
+      "id": "digital_heater_on",
+      "board": "Digital",
+      "title": "Heater ON",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        6
+      ],
+      "setup": "در Hidden وضعیت هیتر تغییر کند؛ در ON، LED سوکت تا برگشت وضعیت به OFF روشن بماند.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "heater_led",
+          "label": "Heater fixture LED is on",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true",
+          "form_fields": [
+            "do_heater"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "digital_heater_off",
+      "board": "Digital",
+      "title": "Heater OFF",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        6
+      ],
+      "setup": "در Hidden وضعیت هیتر تغییر کند؛ در ON، LED سوکت تا برگشت وضعیت به OFF روشن بماند.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "heater_led",
+          "label": "Heater fixture LED is off",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": false
+          },
+          "source_expression": "false",
+          "form_fields": [
+            "do_heater"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "digital_aux_outputs",
+      "board": "Digital",
+      "title": "Auxiliary DO and dummy relay",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        6
+      ],
+      "setup": "در Hidden هر DO تغییر کند و رله مربوطه عمل کند؛ رله dummy جداگانه بررسی شود و OK نمایش داده شود.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "do_relays",
+          "label": "Each selected auxiliary DO operates its corresponding relay",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        },
+        {
+          "id": "dummy",
+          "label": "Dummy relay displays OK",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        }
+      ]
+    },
+    {
+      "id": "digital_aux_inputs_off",
+      "board": "Digital",
+      "title": "Auxiliary DI fixture disconnected",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        6
+      ],
+      "setup": "تمام DIها ابتدا بدون سوکت Failed و سپس با سوکت True باشند؛ WI03 تعداد کانال را مشخص نکرده است.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "all_inputs",
+          "label": "All DIs show Failed",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        }
+      ]
+    },
+    {
+      "id": "digital_aux_inputs_on",
+      "board": "Digital",
+      "title": "Auxiliary DI fixture connected",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        6
+      ],
+      "setup": "تمام DIها ابتدا بدون سوکت Failed و سپس با سوکت True باشند؛ WI03 تعداد کانال را مشخص نکرده است.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "all_inputs",
+          "label": "All DIs show True",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        }
+      ]
+    },
+    {
+      "id": "digital_ac",
+      "board": "Digital",
+      "title": "AC supply connected",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        6
+      ],
+      "setup": "AC power متصل باشد؛ وضعیت AC supply روی نمایشگر True باشد.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "ac_supply",
+          "label": "AC supply is true",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true",
+          "binding": {
+            "source": "binary.AC supply",
+            "multiplier": 1,
+            "unit": "boolean",
+            "conversion_reference": "native boolean measurement"
+          },
+          "form_fields": [
+            "ac_available"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "digital_charger",
+      "board": "Digital",
+      "title": "Charger or battery-only supply",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        6
+      ],
+      "setup": "شارژر متصل یا پک فقط با باتری روشن باشد؛ وضعیت charger برابر True باشد.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "charger",
+          "label": "Charging state is true",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true",
+          "binding": {
+            "source": "binary.Charging",
+            "multiplier": 1,
+            "unit": "boolean",
+            "conversion_reference": "native boolean measurement"
+          }
+        }
+      ]
+    },
+    {
+      "id": "digital_door",
+      "board": "Digital",
+      "title": "Door sensor press and release",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        6
+      ],
+      "setup": "سوویچ و LED به برد پاور وصل شوند. هنگام فشار سوویچ، نمایش LCD و LEDهای Keypad خاموش بمانند و تا رها کردن آن همان وضعیت حفظ شود.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "door_press",
+          "label": "Pressed switch turns the indicated LCD/LED state off until release",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        }
+      ]
+    },
+    {
+      "id": "power_ac",
+      "board": "Power",
+      "title": "Standalone power board with AC",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        6,
+        7
+      ],
+      "setup": "برد جدا با AC روشن شود؛ ولتاژهای کانکتور با مولتی‌متر ثبت شوند. برای Vcc و External Power از مقاومت‌های تعیین‌شده استفاده شود.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "digital_vcc",
+          "label": "Digital Vcc",
+          "unit": "V",
+          "acceptance": {
+            "type": "range",
+            "min": 13,
+            "min_inclusive": false
+          },
+          "source_expression": "X>13.0 V"
+        },
+        {
+          "id": "power_vcc",
+          "label": "Power Vcc",
+          "unit": "V",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 5,
+            "absolute": 0.2
+          },
+          "source_expression": "5±0.2 V"
+        },
+        {
+          "id": "analog_vcc",
+          "label": "Analog Vcc",
+          "unit": "V",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 4.7,
+            "absolute": 0.2
+          },
+          "source_expression": "4.7±0.2 V"
+        },
+        {
+          "id": "external_power",
+          "label": "External Power",
+          "unit": "V",
+          "acceptance": {
+            "type": "range",
+            "min": 11.4,
+            "max": 11.6,
+            "min_inclusive": false,
+            "max_inclusive": false
+          },
+          "source_expression": "11.4<X<11.6"
+        }
+      ]
+    },
+    {
+      "id": "power_battery_read_on",
+      "board": "Power",
+      "title": "Battery Read with battery and AC",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        6,
+        7
+      ],
+      "setup": "جامپر متصل باشد. Battery Read از کانکتور با مولتی‌متر در وضعیت مشخص‌شده اندازه‌گیری شود.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "battery_read",
+          "label": "Battery Read",
+          "unit": "V",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 2.5,
+            "absolute": 0.2
+          },
+          "source_expression": "Bat connect: 2.5±0.2 V"
+        }
+      ]
+    },
+    {
+      "id": "power_battery_read_off",
+      "board": "Power",
+      "title": "Battery Read AC only",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        6,
+        7
+      ],
+      "setup": "جامپر متصل باشد. Battery Read از کانکتور با مولتی‌متر در وضعیت مشخص‌شده اندازه‌گیری شود.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "battery_read",
+          "label": "Battery Read",
+          "unit": "V",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 3.2,
+            "absolute": 0.2
+          },
+          "source_expression": "Bat Not connect: 3.2±0.2 V"
+        }
+      ]
+    },
+    {
+      "id": "power_charger_on",
+      "board": "Power",
+      "title": "Charger range ON",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        6,
+        7
+      ],
+      "setup": "جامپر و باتری متصل باشند و با منبع تغذیه بازه روشن/خاموش شدن شارژر ثبت شود.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "charger_range",
+          "label": "Charger Range",
+          "unit": "V",
+          "acceptance": {
+            "type": "boundary_tolerances",
+            "lower": {
+              "type": "tolerance",
+              "nominal": 23.6,
+              "absolute": 0.1
+            },
+            "upper": {
+              "type": "tolerance",
+              "nominal": 24.2,
+              "absolute": 0.1
+            }
+          },
+          "source_expression": "ON: [23.6±0.1 V]≤X≤[24.2±0.1 V]",
+          "requires_review": "WI03 includes tolerance on both range boundaries; their acceptance interpretation must be reviewed before evaluation."
+        }
+      ]
+    },
+    {
+      "id": "power_charger_off",
+      "board": "Power",
+      "title": "Charger range OFF",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        6,
+        7
+      ],
+      "setup": "جامپر و باتری متصل باشند و با منبع تغذیه بازه روشن/خاموش شدن شارژر ثبت شود.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "charger_range",
+          "label": "Charger Range",
+          "unit": "V",
+          "acceptance": {
+            "type": "boundary_tolerances",
+            "lower": {
+              "type": "tolerance",
+              "nominal": 25,
+              "absolute": 0.2
+            },
+            "upper": {
+              "type": "tolerance",
+              "nominal": 26,
+              "absolute": 0.2
+            }
+          },
+          "source_expression": "OFF: [25.0±0.2 V]≤X≤[26.0±0.2 V]",
+          "requires_review": "WI03 includes tolerance on both range boundaries; their acceptance interpretation must be reviewed before evaluation."
+        }
+      ]
+    },
+    {
+      "id": "power_battery_voltage",
+      "board": "Power",
+      "title": "Battery voltage",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        7
+      ],
+      "setup": "در مرحله جامپر و باتری، Battery Voltage در وضعیت تغذیه تعیین‌شده ثبت شود.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "battery_voltage",
+          "label": "Battery Voltage",
+          "unit": "V",
+          "acceptance": {
+            "type": "boundary_tolerances",
+            "lower": {
+              "type": "tolerance",
+              "nominal": 24,
+              "absolute": 0.1
+            },
+            "upper": {
+              "type": "tolerance",
+              "nominal": 26,
+              "absolute": 0.1
+            }
+          },
+          "source_expression": "[24.0±0.1V]≤X≤[26.0±0.1]",
+          "requires_review": "Retain the exact boundary tolerances; do not silently expand the interval or remove the tolerances."
+        }
+      ]
+    },
+    {
+      "id": "power_pack",
+      "board": "Power",
+      "title": "Assembled pack powered by battery",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        7
+      ],
+      "setup": "پک بردها بدون مشکل با باتری روشن شود؛ AC Supply طبق بخش Digital تست شود.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "startup",
+          "label": "Pack starts correctly on battery",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        }
+      ],
+      "reference": {
+        "battery": {
+          "value": 24,
+          "unit": "V"
+        },
+        "ac_check_case": "digital_ac"
+      }
+    },
+    {
+      "id": "base_usb",
+      "board": "Base",
+      "title": "USB socket",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        7
+      ],
+      "setup": "USB به سوکت مخصوص وصل شود؛ LED برد روشن شود و دستگاه خودکار به صفحه آپدیت برود.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "usb_led",
+          "label": "USB LED is on",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        },
+        {
+          "id": "update_page",
+          "label": "Device automatically opens its update page",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        }
+      ]
+    },
+    {
+      "id": "relay_key",
+      "board": "Relay & key",
+      "title": "Sectionalizer Relay & key board",
+      "models": [
+        "FC22S"
+      ],
+      "pages": [
+        7,
+        8
+      ],
+      "setup": "سوکت به DI/DO متصل باشد. LEDهای GAS و LOCK زرد روشن شوند. OPEN و CLOSE جداگانه به مثبت منبع وصل شوند؛ کلید مقابل رله را فعال کند و کلید وضعیت فعلی عمل نکند. منفی به پین باتری‌تستر اعمال شود.",
+      "inputs": [
+        {
+          "id": "supply",
+          "label": "DC supply",
+          "unit": "VDC",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 12,
+            "absolute": 0.2
+          },
+          "source_expression": "Input: 12±0.2 VDC"
+        }
+      ],
+      "checks": [
+        {
+          "id": "open",
+          "label": "Open relay and LED operate correctly",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true",
+          "form_fields": [
+            "do_trip"
+          ]
+        },
+        {
+          "id": "close",
+          "label": "Close relay and LED operate correctly",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true",
+          "form_fields": [
+            "do_close"
+          ]
+        },
+        {
+          "id": "leds",
+          "label": "GAS and LOCK LEDs illuminate",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        },
+        {
+          "id": "battery_tester",
+          "label": "Battery tester relay operates correctly",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true",
+          "form_fields": [
+            "do_battery"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "modem_before_module",
+      "board": "Modem",
+      "title": "Modem regulators before module assembly",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        8
+      ],
+      "setup": "ماژول متصل نباشد؛ ولتاژ خروجی رگولاتورها و ولتاژ سمت راست سلف به سمت داخل برد نسبت به GND ثبت شوند. WI03 برای این خروجی‌ها حد عددی مشخص نکرده است.",
+      "inputs": [
+        {
+          "id": "supply",
+          "label": "DC supply",
+          "unit": "VDC",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 12,
+            "absolute": 0.2
+          },
+          "source_expression": "12±0.2 VDC"
+        }
+      ],
+      "checks": [
+        {
+          "id": "regulators",
+          "label": "Regulator voltages recorded",
+          "unit": "V",
+          "acceptance": {
+            "type": "unspecified"
+          },
+          "source_expression": "No output voltage limits specified in WI03"
+        },
+        {
+          "id": "inductor",
+          "label": "Inductor voltage recorded",
+          "unit": "V",
+          "acceptance": {
+            "type": "unspecified"
+          },
+          "source_expression": "No output voltage limits specified in WI03"
+        }
+      ]
+    },
+    {
+      "id": "modem_after_module",
+      "board": "Modem",
+      "title": "Modem with module SIM and antenna",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        8
+      ],
+      "setup": "ماژول، سیم‌کارت و آنتن نصب شوند؛ برد با همان تغذیه روشن شود. LED روشن و پس از دریافت IP چشمک‌زن شود؛ جامپرهای پشت برد با بازر و سوکت‌های سیم‌کارت بررسی شوند.",
+      "inputs": [
+        {
+          "id": "supply",
+          "label": "DC supply",
+          "unit": "VDC",
+          "acceptance": {
+            "type": "tolerance",
+            "nominal": 12,
+            "absolute": 0.2
+          },
+          "source_expression": "12±0.2 VDC"
+        }
+      ],
+      "checks": [
+        {
+          "id": "status",
+          "label": "Modem LED turns on",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true",
+          "form_fields": [
+            "modem_status"
+          ]
+        },
+        {
+          "id": "sim",
+          "label": "SIM sockets are installed",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true",
+          "form_fields": [
+            "sim_card"
+          ]
+        },
+        {
+          "id": "ip",
+          "label": "Modem obtains an IP and LED blinks",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true",
+          "form_fields": [
+            "ip_acquisition"
+          ]
+        },
+        {
+          "id": "jumpers",
+          "label": "Rear jumpers have continuity",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        }
+      ]
+    },
+    {
+      "id": "modem_pack",
+      "board": "Modem",
+      "title": "Modem IP in the assembled pack",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        8
+      ],
+      "setup": "مودم به پک وصل و دستگاه روشن شود؛ IP دریافت‌شده مودم در صفحه 6 بررسی شود.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "ip",
+          "label": "Modem obtains an IP visible on page 6",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true",
+          "form_fields": [
+            "ip_acquisition"
+          ]
+        }
+      ],
+      "reference": {
+        "display_page": 6
+      }
+    },
+    {
+      "id": "ar_drv_power",
+      "board": "AR DRV Power",
+      "title": "AR driver power open/close",
+      "models": [
+        "FC22AR"
+      ],
+      "pages": [
+        8
+      ],
+      "setup": "جامپر، برد بوستر، پنل ریکلوزر، برد خازن و مولتی‌متر متصل شوند. دو باتری سری با سوویچ تغذیه شوند. مولتی‌متر موازی مسیر بانک خازن افت ولتاژ را هنگام Open/Close ثبت کند؛ WI03 حد عددی افت یا خروجی بوستر مشخص نکرده است.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "open_close",
+          "label": "Both open and close operations work",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        },
+        {
+          "id": "voltage_drop",
+          "label": "Capacitor-bank voltage drop recorded",
+          "unit": "V",
+          "acceptance": {
+            "type": "unspecified"
+          },
+          "source_expression": "No numerical acceptance limit stated in WI03"
+        }
+      ],
+      "reference": {
+        "battery_count": 2,
+        "each_battery": {
+          "value": 12,
+          "unit": "V"
+        },
+        "series_supply": {
+          "value": 24,
+          "unit": "V"
+        },
+        "booster_input": {
+          "value": 24,
+          "unit": "V"
+        }
+      }
+    },
+    {
+      "id": "lldl",
+      "board": "LLDL",
+      "title": "Voltage/current presence indicators",
+      "models": [
+        "FC22AR",
+        "FC22S"
+      ],
+      "pages": [
+        8
+      ],
+      "setup": "برد به کانکتور HMI وصل باشد و برد Analog ورودی ولتاژ و جریان داشته باشد؛ LEDها همزمان روشن بمانند.",
+      "inputs": [],
+      "checks": [
+        {
+          "id": "leds",
+          "label": "All relevant LEDs stay on together",
+          "unit": "boolean",
+          "acceptance": {
+            "type": "equals",
+            "value": true
+          },
+          "source_expression": "true"
+        }
+      ]
+    }
+  ]
+}

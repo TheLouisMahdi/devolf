@@ -128,8 +128,10 @@ class TestLotTests(unittest.TestCase):
             self.assertEqual(loaded.auto_fields, ["freq_source"])
 
     def test_example_loads(self):
-        example = Path(__file__).parents[1] / "code" / "test_lots" / "fc22s.example.json"
-        self.assertEqual(load_lot(example)["tests"][0]["source"], "analog.F ABC")
+        from wolfeye.services.fc22_instruction import load_instruction
+        instruction = load_instruction()
+        self.assertEqual(instruction["document"]["code"], "WI03")
+        self.assertTrue(instruction["cases"])
 
 
 if __name__ == "__main__":

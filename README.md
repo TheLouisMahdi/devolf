@@ -190,6 +190,38 @@ named scenario folders.
 
 ### FC22 Test Lots
 
+The company procedure is [code/test_lots/wi03.json](code/test_lots/wi03.json),
+transcribed from **WI03 revision 00, 1403/01/25, 8 pages**. It contains 38 test
+modes, 104 checks and 14 numeric input specifications for HMI, Keypad, Analog,
+Digital, Power, Base, Relay & key, Modem, AR DRV Power and LLDL. Every mode keeps
+its model, setup, units, source expressions and Word page references.
+
+In **FC22 Tester → Setup → WI03**, select a mode and open its worksheet. Establish
+the displayed input/setup conditions, confirm them, and record the measurements.
+Applicable DUT voltage/current readings use the conversions already present in
+System Status (raw volts to kV, raw current divided by ten to A). Oscilloscope,
+multimeter and qualitative observations are recorded explicitly as manual.
+Frequency is entered in verified Hz; WI03 does not establish raw F ABC/F RST
+scaling. No stimulus amplitude calibration or automatic board commands are
+inferred from the procedure.
+
+Tolerance endpoints are inclusive. Explicit `X>13.0 V` and `11.4<X<11.6` remain
+strict. The IN differential entry **2.7±3.3 V** and the three Charger/Battery
+ranges with tolerances on their boundaries remain verbatim and **require review**.
+Where WI03 supplies no numerical acceptance limit, the program leaves the check
+NOT_TESTED rather than inventing a threshold. Those cases cannot automatically
+approve a report. The previous illustrative frequency/trip/charging limits were
+removed; acceptance defaults now come from this procedure.
+
+Saving a worksheet preserves the exact rules, source identity, setup confirmation,
+model, units, timestamps and individual results in `session.json`. Applicable
+checklist fields use these recorded engineering-unit values and are protected
+from subsequent raw autofill. Manual edits invalidate the corresponding WI03
+verdicts; failed, missing, changed or review-required criteria trigger the PDF
+warning. The original Word file is read-only source material and is not bundled
+or published with DEVolf. Edit/load the JSON to maintain procedure data; protocol
+and device connections retain their existing responsibilities.
+
 FC22 Tester shares the **existing EmWolfConnection and EWS2 protocol** with the
 EmWolf tab. Its Setup page can connect/disconnect the board, run the current
 EmWolf project and open the scenario editor. Both tabs show the same connection
@@ -213,8 +245,8 @@ the existing protocols remain manual. Session JSON records measurement sources,
 timestamps and confirmed EmWolf feedback. The optional external-equipment
 adapter is separate from the shared EmWolf board controls.
 
-In **FC22 Tester → Setup**, create a Test Lot or load a version-1 JSON file
-from [code/test_lots](code/test_lots). Select the DUT model and assign each test
+For additional custom acceptance rules, create a Test Lot or load a version-1
+JSON lot. Select the DUT model and assign each test
 to a checklist field. The source editor uses BeachEye's point catalog, including
 the connected DUT's exact build when available. Offline lots accept company
 points from revision 50 and newer; an unavailable reading remains NOT_TESTED.
@@ -228,8 +260,8 @@ points from revision 50 and newer; an unavailable reading remains NOT_TESTED.
 - `external.FIELD` accepts equipment measurements through the optional Test Bench
   listener, or the existing external-value adapter. Start the listener explicitly
   and use the displayed session ID and temporary token. Its protocol is a 4-byte
-  network-order length followed by a JSON measurement object; the examples include
-  a bench/EmWolf lot. Each device's sequence number must increase.
+  network-order length followed by a JSON measurement object.
+  Each device's sequence number must increase.
 
 Example bench object (prefix its UTF-8 JSON with the 4-byte byte length):
 
