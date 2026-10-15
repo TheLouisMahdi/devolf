@@ -179,7 +179,7 @@ class MainWindow(QMainWindow):
         self.events_page = EventsPage()
         self.emwolf_page = EmWolfPage()
         self.fc22_tester_page = Fc22TesterPage()
-        self._tab_containers: dict[QWidget, QScrollArea] = {}
+        self._tab_containers: dict[QWidget, QWidget] = {}
         for page, title in (
             (self.status_page, "System Status"),
             (self.measurement_page, "Measurements"),
@@ -190,7 +190,7 @@ class MainWindow(QMainWindow):
             (self.emwolf_page, "EmWolf"),
             (self.fc22_tester_page, "FC22 Tester"),
         ):
-            container = _scrollable(page)
+            container = page if page is self.fc22_tester_page else _scrollable(page)
             self._tab_containers[page] = container
             self.tabs.addTab(container, title)
         outer.addWidget(self.tabs)

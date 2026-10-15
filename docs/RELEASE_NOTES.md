@@ -1,5 +1,19 @@
 # Release-ready branch
 
+## FC22 interface consolidation (2026-10-15)
+
+- Four fixed workflow steps, grouped form inputs and a single editable test
+  table replace the crowded results sidebar. Sources, verdicts and rule
+  tooltips stay next to observations; the complete diagnostic view is optional.
+- Setup retains the WI03 revision 00 procedure, existing DUT autofill and
+  shared EmWolf board connection. Custom Test Lot JSON and equipment adapters
+  remain available in expandable settings. Reports expose optional approval
+  fields and enable Open/Print after a PDF exists.
+- This release is built from the current `devolf` tree, retaining ABI 8 event
+  decoding and full 16-bit receive lengths. The 5112-byte short-counter stream,
+  fragmented 5512-byte socket response and frame sizes through 65535 bytes
+  remain covered by the native regressions.
+
 This branch contains the cleaned, release-oriented `DEVolf` product tree.
 It is based on the `wolfeye` branch at commit `1718877`, but removes the
 repository's nested legacy layouts and keeps one canonical application source.

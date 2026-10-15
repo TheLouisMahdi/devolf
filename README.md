@@ -190,6 +190,15 @@ named scenario folders.
 
 ### FC22 Test Lots
 
+FC22 Tester uses four fixed workflow steps: Setup, Form data, Run test and
+Report. The test table keeps each observation beside its source and verdict;
+hover over the parameter or result for the exact acceptance rule. Use **All
+measurements & test results** for the complete diagnostic list. Setup exposes
+WI03 worksheets and shared EmWolf controls; enable **Custom acceptance rules /
+Test Lot JSON** to load or edit additional rules, including percent tolerances.
+Blank manual fields can be completed on paper. Form groups adapt to the window
+width, and test navigation stays visible while measurements scroll.
+
 The company procedure is [code/test_lots/wi03.json](code/test_lots/wi03.json),
 transcribed from **WI03 revision 00, 1403/01/25, 8 pages**. It contains 38 test
 modes, 104 checks and 14 numeric input specifications for HMI, Keypad, Analog,

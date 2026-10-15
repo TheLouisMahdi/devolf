@@ -34,13 +34,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from wolfeye.widgets.fc22_tester_ui import build_tester_ui, SECTION_NAMES
 from wolfeye.branding import PRODUCT_NAME
 from wolfeye.qt import (
-    QAbstractItemView,
     QApplication,
     QCheckBox,
     QColor,
-    QHeaderView,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -51,14 +50,11 @@ from wolfeye.qt import (
     QLabel,
     QLineEdit,
     QObject,
-    QListWidget,
-    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
     QScrollArea,
     QSpinBox,
-    QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -313,51 +309,47 @@ class Fc22TesterPage(QWidget):
 
     # ------------------------------------------------------------- UI build
     def _build_ui(self) -> None:
-        root = QVBoxLayout(self)
-        root.setContentsMargins(8, 5, 8, 5)
-        root.setSpacing(5)
+        build_tester_ui(self, FORM_FIELDS, RUN_TEST_SECTIONS, {
+            "product": PRODUCT_TYPES, "modem": MODEM_TYPES,
+            "battery": BATTERY_TYPES, "appearance": APPEARANCE_TYPES,
+        })
 
-        # Step navigation — the four workflow steps, compact like the draft.
-        steps_box = QGroupBox("Tester workflow")
-        steps_row = QHBoxLayout(steps_box)
-        steps_row.setContentsMargins(8, 6, 8, 4)
-        steps_row.setSpacing(6)
-        self.step_buttons: list[QPushButton] = []
-        for index, title in enumerate(("Setup", "Form Data", "Run Test", "Report")):
-            button = QPushButton(title)
-            button.setCheckable(True)
-            button.clicked.connect(lambda _checked=False, i=index: self._show_step(i))
-            self.step_buttons.append(button)
-            steps_row.addWidget(button)
-        self.session_label = QLabel("No session")
-        self.session_label.setObjectName("muted")
-        steps_row.addStretch()
-        steps_row.addWidget(self.session_label)
-        root.addWidget(steps_box)
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._apply_tester_layout()
 
-        self.step_pages: list[QWidget] = []
-        self.step_stack = QVBoxLayout()
-        stack_holder = QWidget()
-        stack_holder.setLayout(self.step_stack)
-        root.addWidget(stack_holder, 1)
+    def _apply_tester_layout(self) -> None:
+        columns = 1 if self.width() < 760 else 2 if self.width() < 1100 else 3
+        for grid, cells, maximum in self.responsive_grids:
+            count = min(columns, maximum)
+            for cell in cells:
+                grid.removeWidget(cell)
+            for index, cell in enumerate(cells):
+                grid.addWidget(cell, index // count, index % count)
+            for column in range(3):
+                grid.setColumnStretch(column, 1 if column < count else 0)
+        self.test_table.setColumnHidden(2, self.width() < 1000)
+        self.test_table.setColumnWidth(1, max(135, min(210, self.width() // 6)))
 
-        # Page 0 — Setup / DUT information
-        setup_page = self._build_setup_page()
-        # Page 1 — Final Inspection Form Data
-        form_page = self._build_form_page()
-        # Page 2 — Run Test
-        test_page = self._build_test_page()
-        # Page 3 — Report
-        report_page = self._build_report_page()
-        for page in (setup_page, form_page, test_page, report_page):
-            self.step_pages.append(page)
-            self.step_stack.addWidget(page)
+    def _refresh_report_file(self) -> None:
+        available = self.current_pdf is not None and self.current_pdf.exists()
+        self.open_button.setEnabled(available)
+        self.print_button.setEnabled(available)
+        self.report_file_label.setText(str(self.current_pdf) if available else "No PDF generated for this session.")
 
     # -- Setup ------------------------------------------------------------
     def _build_setup_page(self) -> QWidget:
         page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(0, 0, 4, 0)
+        layout.setSpacing(10)
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
 
         session_box = QGroupBox("Session")
         session_grid = QGridLayout(session_box)
@@ -377,7 +369,8 @@ class Fc22TesterPage(QWidget):
         new_button = QPushButton("New session")
         new_button.clicked.connect(self._new_session)
         self.session_combo = QComboBox()
-        self.session_combo.setMinimumWidth(220)
+        self.session_combo.setMinimumWidth(0)
+        self.session_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         for session_id in self.store.list_sessions():
             self.session_combo.addItem(session_id)
         reload_button = QPushButton("Load selected")
@@ -386,7 +379,7 @@ class Fc22TesterPage(QWidget):
         session_actions.addWidget(new_button)
         session_actions.addSpacing(8)
         session_actions.addWidget(history_label)
-        session_actions.addWidget(self.session_combo)
+        session_actions.addWidget(self.session_combo, 1)
         session_actions.addSpacing(8)
         session_actions.addWidget(reload_button)
         session_actions.addStretch()
@@ -432,7 +425,12 @@ class Fc22TesterPage(QWidget):
         layout.addWidget(dut_box)
         layout.addWidget(self._build_emwolf_controls())
         layout.addWidget(self._build_instruction_settings())
-        layout.addWidget(self._build_lot_settings())
+        advanced = self._build_lot_settings()
+        advanced.hide()
+        show_advanced = QCheckBox("Custom acceptance rules / Test Lot JSON")
+        show_advanced.toggled.connect(advanced.setVisible)
+        layout.addWidget(show_advanced)
+        layout.addWidget(advanced)
         bench = self._build_bench_settings()
         bench.setVisible(False)
         show_bench = QCheckBox("External equipment adapter")
@@ -445,7 +443,7 @@ class Fc22TesterPage(QWidget):
         continue_button = QPushButton("Continue to Form Data →")
         continue_button.setObjectName("primary")
         continue_button.clicked.connect(lambda: self._show_step(1))
-        layout.addWidget(continue_button, 0, Qt.AlignmentFlag.AlignRight)
+        outer.addWidget(continue_button, 0, Qt.AlignmentFlag.AlignRight)
         return page
 
     def _build_emwolf_controls(self) -> QWidget:
@@ -464,17 +462,18 @@ class Fc22TesterPage(QWidget):
         configure.clicked.connect(self.emwolf_setup_requested.emit)
         self.emwolf_state = QLabel("Disconnected")
         self.emwolf_feedback = QLabel("No confirmed EmWolf result in this session")
-        self.auto_refresh = QCheckBox("Update DUT measurements automatically while Tester is open")
+        self.auto_refresh = QCheckBox("Auto-refresh DUT measurements")
         self.auto_refresh.setChecked(True)
         refresh = QPushButton("Read DUT measurements")
         refresh.clicked.connect(self.refresh_requested.emit)
         for col, widget in enumerate((QLabel("Host"), self.emwolf_host, QLabel("Port"), self.emwolf_port,
                                       self.emwolf_connect_button, self.emwolf_run_button, configure)):
-            layout.addWidget(widget, 0, col)
-        layout.addWidget(self.emwolf_state, 1, 0, 1, 2)
-        layout.addWidget(self.emwolf_feedback, 1, 2, 1, 5)
-        layout.addWidget(self.auto_refresh, 2, 0, 1, 5)
-        layout.addWidget(refresh, 2, 5, 1, 2)
+            layout.addWidget(widget, 0 if col < 4 else 1, col if col < 4 else col - 4)
+        self.emwolf_feedback.setWordWrap(True)
+        layout.addWidget(self.emwolf_state, 1, 3)
+        layout.addWidget(self.emwolf_feedback, 2, 0, 1, 4)
+        layout.addWidget(self.auto_refresh, 3, 0, 1, 2)
+        layout.addWidget(refresh, 3, 2, 1, 2)
         return group
 
     def set_emwolf_board_state(self, connected: bool, host: str, port: int) -> None:
@@ -499,6 +498,7 @@ class Fc22TesterPage(QWidget):
         group = QGroupBox("Test Lot Configuration")
         grid = QGridLayout(group)
         self.lot_label = QLabel("No active test lot")
+        self.lot_label.setWordWrap(True)
         self.lot_label.setObjectName("muted")
         load_button = QPushButton("Load JSON")
         load_button.clicked.connect(self._load_lot_dialog)
@@ -550,19 +550,20 @@ class Fc22TesterPage(QWidget):
 
     def _build_instruction_settings(self) -> QWidget:
         group = QGroupBox("WI03 · Company test procedure")
-        layout = QHBoxLayout(group)
+        layout = QGridLayout(group)
         self.instruction_case = QComboBox()
         self.instruction_case.setMinimumWidth(220)
+        self.instruction_case.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.instruction_status = QLabel()
         self.instruction_status.setWordWrap(True)
         run = QPushButton("Open test worksheet")
         run.clicked.connect(self._open_instruction_case)
         load = QPushButton("Load procedure JSON")
         load.clicked.connect(self._load_instruction_dialog)
-        layout.addWidget(self.instruction_case, 2)
-        layout.addWidget(run)
-        layout.addWidget(load)
-        layout.addWidget(self.instruction_status, 1)
+        layout.addWidget(self.instruction_case, 0, 0)
+        layout.addWidget(run, 0, 1)
+        layout.addWidget(load, 0, 2)
+        layout.addWidget(self.instruction_status, 1, 0, 1, 3)
         return group
 
     def _refresh_instruction_settings(self) -> None:
@@ -1133,211 +1134,6 @@ class Fc22TesterPage(QWidget):
             self.store.save()
             self._refresh_test_status()
 
-    # -- Form Data ----------------------------------------------------------
-    def _build_form_page(self) -> QWidget:
-        page = QWidget()
-        outer = QVBoxLayout(page)
-        outer.setContentsMargins(0, 0, 0, 0)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        body = QWidget()
-        grid = QGridLayout(body)
-        grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(8)
-
-        for index, (key, label, kind) in enumerate(FORM_FIELDS):
-            row, col = divmod(index, 4)
-            cell = QWidget()
-            cell_layout = QVBoxLayout(cell)
-            cell_layout.setContentsMargins(0, 0, 0, 0)
-            cell_layout.setSpacing(2)
-            caption = QLabel(label)
-            caption.setObjectName("muted")
-            widget: QWidget
-            if kind == "product":
-                widget = QComboBox()
-                widget.addItem("Select…", "")
-                for value in PRODUCT_TYPES:
-                    widget.addItem(value, value)
-                widget.currentIndexChanged.connect(self._form_changed)
-            elif kind == "modem":
-                widget = QComboBox()
-                widget.addItem("Select…", "")
-                for value in MODEM_TYPES:
-                    widget.addItem(value, value)
-                widget.currentIndexChanged.connect(self._form_changed)
-            elif kind == "battery":
-                widget = QComboBox()
-                widget.addItem("Select…", "")
-                for value in BATTERY_TYPES:
-                    widget.addItem(value, value)
-                widget.currentIndexChanged.connect(self._form_changed)
-            elif kind == "appearance":
-                widget = QComboBox()
-                widget.addItem("Select…", "")
-                for value in APPEARANCE_TYPES:
-                    widget.addItem(value, value)
-                widget.currentIndexChanged.connect(self._form_changed)
-            else:
-                widget = QLineEdit()
-                widget.setPlaceholderText(f"Required · '{NA}' if N/A")
-                widget.textChanged.connect(self._form_changed)
-            self.fields[key] = widget
-            cell_layout.addWidget(caption)
-            cell_layout.addWidget(widget)
-            grid.addWidget(cell, row, col)
-        grid.setColumnStretch(4, 1)
-
-        software = self.fields.get("software_version")
-        if software is None:
-            software = QLineEdit()
-            software.setReadOnly(True)
-            software.setPlaceholderText("AUTO from FC22 LAN")
-            self.fields["software_version"] = software
-        version_cell = QWidget()
-        version_layout = QVBoxLayout(version_cell)
-        version_layout.setContentsMargins(0, 0, 0, 0)
-        version_layout.setSpacing(2)
-        version_caption = QLabel("Software Version · AUTO")
-        version_caption.setObjectName("muted")
-        version_layout.addWidget(version_caption)
-        version_layout.addWidget(software)
-        grid.addWidget(version_cell, (len(FORM_FIELDS) + 3) // 4, 0)
-
-        scroll.setWidget(body)
-        outer.addWidget(scroll, 1)
-
-        completeness_row = QHBoxLayout()
-        self.form_completeness = QLabel("—")
-        self.form_completeness.setStyleSheet("font-weight:700;")
-        next_button = QPushButton("Continue to Run Test →")
-        next_button.setObjectName("primary")
-        next_button.clicked.connect(lambda: self._show_step(2))
-        completeness_row.addWidget(self.form_completeness)
-        completeness_row.addStretch()
-        completeness_row.addWidget(next_button)
-        outer.addLayout(completeness_row)
-        return page
-
-    # -- Run Test -------------------------------------------------------------
-    def _build_test_page(self) -> QWidget:
-        page = QWidget()
-        layout = QHBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-
-        nav_box = QGroupBox("Form test sequence")
-        nav_box.setMaximumWidth(260)
-        nav = QVBoxLayout(nav_box)
-        self.section_list = QListWidget()
-        for section in RUN_TEST_SECTIONS:
-            self.section_list.addItem(QListWidgetItem(section.title))
-        self.section_list.currentRowChanged.connect(self._show_section)
-        nav.addWidget(self.section_list, 1)
-        hint = QLabel(f"Use '{NA}' where the printed form does not apply.")
-        hint.setObjectName("muted")
-        hint.setWordWrap(True)
-        nav.addWidget(hint)
-        layout.addWidget(nav_box)
-
-        center_box = QGroupBox("RUN TEST — company checklist order")
-        center = QVBoxLayout(center_box)
-        head = QHBoxLayout()
-        self.section_title = QLabel("—")
-        head.addWidget(self.section_title)
-        head.addStretch()
-        self.section_progress = QLabel("—")
-        self.section_progress.setObjectName("muted")
-        head.addWidget(self.section_progress)
-        center.addLayout(head)
-
-        self.field_area = QWidget()
-        self.field_grid = QGridLayout(self.field_area)
-        self.field_grid.setHorizontalSpacing(12)
-        self.field_grid.setVerticalSpacing(8)
-        center.addWidget(self.field_area, 1)
-
-        actions = QHBoxLayout()
-        self.previous_button = QPushButton("← Previous")
-        self.previous_button.clicked.connect(self._previous_section)
-        self.next_button = QPushButton("Save & Next →")
-        self.next_button.setObjectName("primary")
-        self.next_button.clicked.connect(self._next_section)
-        actions.addWidget(self.previous_button)
-        actions.addStretch()
-        actions.addWidget(self.next_button)
-        center.addLayout(actions)
-        layout.addWidget(center_box, 1)
-
-        status_box = QGroupBox("Status")
-        status_box.setMinimumWidth(270)
-        status_box.setMaximumWidth(330)
-        status = QVBoxLayout(status_box)
-        self.test_status = QLabel("Filled fields  0 / 0")
-        self.section_status = QLabel("Sections  0 / 0")
-        self.test_status.setStyleSheet("font-weight:700;")
-        status.addWidget(self.test_status)
-        status.addWidget(self.section_status)
-        self.lot_result_status = QLabel("Test Lot: not loaded")
-        self.lot_result_status.setWordWrap(True)
-        status.addWidget(self.lot_result_status)
-        status.addWidget(QLabel("Measurements & test results"))
-        self.lot_result_table = QTableWidget(0, 3)
-        self.lot_result_table.setHorizontalHeaderLabels(("Test", "Value", "Verdict"))
-        self.lot_result_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.lot_result_table.verticalHeader().setVisible(False)
-        self.lot_result_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.lot_result_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.lot_result_table.setAlternatingRowColors(True)
-        self.lot_result_table.setMinimumHeight(170)
-        status.addWidget(self.lot_result_table, 1)
-        note = QLabel(
-            "Result-only items use PASS / FAIL / UNKNOWN; status items use "
-            "TRUE / FALSE / UNKNOWN. Measured values are typed exactly as read."
-        )
-        note.setObjectName("muted")
-        note.setWordWrap(True)
-        status.addWidget(note)
-        layout.addWidget(status_box)
-        return page
-
-    # -- Report ---------------------------------------------------------------
-    def _build_report_page(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        template_box = QGroupBox("Company Final Inspection Checklist")
-        template_row = QHBoxLayout(template_box)
-        template_row.addWidget(QLabel("Template"))
-        self.form_combo = QComboBox()
-        self.form_combo.addItem("Sectionalizer / S", "s")
-        self.form_combo.addItem("Auto Recloser / A", "a")
-        template_row.addWidget(self.form_combo)
-        self.generate_button = QPushButton("Generate checklist PDF")
-        self.generate_button.setObjectName("primary")
-        self.generate_button.clicked.connect(self._generate_form)
-        self.open_button = QPushButton("Open PDF")
-        self.open_button.clicked.connect(self._open_pdf)
-        self.print_button = QPushButton("Print checklist")
-        self.print_button.clicked.connect(self._print_pdf)
-        self.json_button = QPushButton("Write session JSON")
-        self.json_button.clicked.connect(self._write_session_json)
-        template_row.addWidget(self.generate_button)
-        template_row.addWidget(self.open_button)
-        template_row.addWidget(self.print_button)
-        template_row.addStretch()
-        template_row.addWidget(self.json_button)
-        layout.addWidget(template_box)
-
-        self.report_summary = QLabel("—")
-        self.report_summary.setObjectName("muted")
-        self.report_summary.setWordWrap(True)
-        layout.addWidget(self.report_summary)
-        layout.addStretch()
-        return page
-
     # ------------------------------------------------------------ navigation
     def _show_step(self, index: int) -> None:
         for i, page in enumerate(self.step_pages):
@@ -1351,6 +1147,8 @@ class Fc22TesterPage(QWidget):
             self._show_section(row)
         elif index == 3:
             self._refresh_report_summary()
+            self._refresh_report_file()
+        self._apply_tester_layout()
 
     # ------------------------------------------------------------- session
     def _new_session(self) -> None:
@@ -1419,8 +1217,13 @@ class Fc22TesterPage(QWidget):
         if self.session is None:
             self.session_label.setText("No session")
             return
-        started = self.session.started_at.replace("T", " ") if self.session.started_at else ""
-        self.session_label.setText(f"{self.session.session_id} · {started}")
+        started = self.session.started_at[:16].replace("T", " ") if self.session.started_at else ""
+        self.session_label.setText(f"Final inspection · {started} · saved automatically")
+        self.session_label.setToolTip(self.session.session_id)
+        if self.session_combo.findText(self.session.session_id) < 0:
+            self.session_combo.addItem(self.session.session_id)
+        self.session_combo.setCurrentText(self.session.session_id)
+        self._refresh_report_file()
 
     def _save_current(self) -> None:
         if self.session is None or self._loading:
@@ -1609,21 +1412,14 @@ class Fc22TesterPage(QWidget):
         section = RUN_TEST_SECTIONS[row]
         self.section_title.setText(f"{section.title}   ({section.domain})")
         self.section_progress.setText(f"Section {row + 1} / {len(RUN_TEST_SECTIONS)}")
-        while self.field_grid.count():
-            item = self.field_grid.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
         self.test_fields.clear()
-
+        self.test_table.setRowCount(0)
+        self.test_table.setRowCount(len(section.fields))
+        self.test_row_keys = [field.key for field in section.fields]
         for index, field in enumerate(section.fields):
-            cell_row, col = divmod(index, 2)
-            cell = QWidget()
-            cell_layout = QVBoxLayout(cell)
-            cell_layout.setContentsMargins(0, 0, 0, 0)
-            cell_layout.setSpacing(2)
-            caption = QLabel(field.label)
-            caption.setObjectName("muted")
+            self.test_table.setItem(index, 0, QTableWidgetItem(field.label))
+            self.test_table.setItem(index, 2, QTableWidgetItem("Manual"))
+            self.test_table.setItem(index, 3, QTableWidgetItem("PENDING"))
             widget: QWidget
             if field.kind == "result":
                 widget = QComboBox()
@@ -1644,10 +1440,7 @@ class Fc22TesterPage(QWidget):
                 widget.setPlaceholderText(field.placeholder)
                 widget.textChanged.connect(self._test_changed)
             self.test_fields[field.key] = widget
-            cell_layout.addWidget(caption)
-            cell_layout.addWidget(widget)
-            self.field_grid.addWidget(cell, cell_row, col)
-        self.field_grid.setColumnStretch(2, 1)
+            self.test_table.setCellWidget(index, 1, widget)
 
         if self.session is not None:
             self._loading = True
@@ -1721,15 +1514,47 @@ class Fc22TesterPage(QWidget):
             if self.session.test_lot else "Measured values fill automatically; select a Test Lot for acceptance verdicts"
         )
         self._refresh_lot_results_table()
+        self._refresh_section_results()
         color = "#18864b" if filled == len(RUN_TEST_FIELD_KEYS) else "#a55b00"
         self.test_status.setStyleSheet(f"color:{color}; font-weight:700;")
         current = self.section_list.currentRow()
         for row, section in enumerate(RUN_TEST_SECTIONS):
             done = all(self._filled(data.get(field.key)) for field in section.fields)
             marker = "✓" if done else "○"
-            self.section_list.item(row).setText(f"{marker}  {section.title}")
+            self.section_list.item(row).setText(f"{marker}  {row + 1:02d} {SECTION_NAMES[section.key]}")
         if current >= 0:
             self.section_list.setCurrentRow(current)
+
+    def _refresh_section_results(self) -> None:
+        """Show provenance and verified verdict beside the editable observation."""
+        if self.session is None:
+            return
+        tests = {test["report_field"]: test for test in self.session.test_lot.get("tests", [])}
+        for row, field in enumerate(getattr(self, "test_row_keys", [])):
+            test = tests.get(field)
+            reading = self.session.auto_readings.get(field, {})
+            result = self.session.test_results.get(field, {})
+            source = "Auto" if field in self.session.auto_fields else "Manual"
+            detail = reading.get("source", "Operator entry; may also be completed on paper.")
+            if test:
+                detail = json.dumps(test, ensure_ascii=False, indent=2)
+            for record in self.session.instruction_results.values():
+                for check in record["case"]["checks"]:
+                    if field in self.session.instruction_fields and field in check.get("form_fields", []):
+                        source = "WI03"
+                        result = record["results"].get(check["id"], {})
+                        detail = json.dumps(check, ensure_ascii=False, indent=2)
+            source_cell = self.test_table.item(row, 2)
+            source_cell.setText(source)
+            source_cell.setToolTip(str(detail))
+            self.test_table.item(row, 0).setToolTip(str(detail))
+            status = result.get("status", "MEASURED" if reading else "MANUAL" if self._filled(self.session.test_data.get(field)) else "PENDING")
+            if status == "NOT_TESTED":
+                status = "PENDING"
+            cell = self.test_table.item(row, 3)
+            cell.setText(status)
+            cell.setToolTip(str(result.get("reason", detail)))
+            cell.setForeground(QColor({"PASS": "#167144", "FAIL": "#b43743", "INVALID": "#98611b"}.get(status, "#647580")))
 
     def _refresh_lot_results_table(self) -> None:
         """Update the native results view without rebuilding it every sample."""
@@ -1876,6 +1701,7 @@ class Fc22TesterPage(QWidget):
             QMessageBox.critical(self, "Checklist", f"Could not generate the PDF:\n{exc}")
             return
         self.current_pdf = output
+        self._refresh_report_file()
         self.report_summary.setText(f"Checklist PDF: {output}")
 
     def _instruction_complete(self) -> bool:
