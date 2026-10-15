@@ -1,5 +1,22 @@
 # Release-ready branch
 
+## Remove extra frame and measurement restrictions (2026-10-15)
+
+- General frame creation and queued requests no longer reject data at the
+  firmware file-chunk size. Both directions use the two-byte wire length,
+  with the sequence byte included for native requests. File upload partitioning
+  remains aligned with the company source.
+- Complete Measurements blocks with different point counts use wire-index
+  labels instead of failing a model/build profile check. Empty channels and
+  repeated blocks retain all received values. Known profiles retain company names.
+  Status cards remain unavailable when only indexed readings exist, rather than
+  displaying an invented zero or OFF state for an unidentified point.
+- Event reception retains the deployed 5112-byte CC16 correction, current CC32
+  support, dynamic frame assembly, CRC and sequence checks. Truncated or corrupt
+  data remains distinguishable from a valid larger response.
+- Event file downloads use the reported file length without the former desktop
+  1 MiB rejection, and chunk sequences wrap within their uint16 wire field.
+
 ## FC22 interface consolidation (2026-10-15)
 
 - Four fixed workflow steps, grouped form inputs and a single editable test
@@ -66,7 +83,8 @@ repository's nested legacy layouts and keeps one canonical application source.
 
 - Reported `invalid 5512 bytes` failure covered with ring-decoder and socket
   regressions. Receive frames accept the full 16-bit length with CRC/sequence
-  validation; outgoing company limits remain intact.
+  validation; outgoing frames at that stage retained the former 5 KiB policy
+  (superseded by the frame restriction removal above).
 - Ring counter events, full/wrapped boundaries and empty slots corrected.
   Truncated AI/CC records fail explicitly. Serialized events use the same
   pinned company implementation and point maps.

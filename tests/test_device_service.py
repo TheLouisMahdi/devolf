@@ -23,7 +23,6 @@ from wolfeye.services.device_service import (
     LEGACY_FRAME_STATUS,
     LEGACY_FRAME_DOWNLOAD,
     LEGACY_STATUS_FILE_SIZE,
-    MAX_EVENTS_FILE_SIZE,
 )
 
 
@@ -70,6 +69,21 @@ class DeviceServiceTests(unittest.TestCase):
         self.service._provider = self.provider  # type: ignore[assignment]
         self.service.info.connected = True
         self.service.info.transport = "Native TCP:6536"
+
+    def test_complete_measurements_with_different_or_large_point_counts_reach_ui(self) -> None:
+        changes, messages = [], []
+        self.service.measurements_changed.connect(changes.append)
+        self.service.message.connect(lambda text, level: messages.append((text, level)))
+        for model in ("FC22AR", "FC22S"):
+            self.service.info.model = model
+            self.service.info.build = 51
+            for count in (15, 121, 4095):
+                data = struct.pack("<H", (count << 4) | 2) + struct.pack(f"<{count}H", *range(count))
+                self.service._handle_native_response("measurements", FRAME_MEASUREMENTS, data)
+                self.assertEqual(len(changes[-1].analog), count)
+                self.assertEqual(changes[-1].analog[f"AI {count - 1}"], count - 1)
+        self.assertEqual(len(changes), 6)
+        self.assertTrue(all(level == "success" for _, level in messages))
 
     def test_requests_delegate_to_native_provider_and_settings_follow_info(self) -> None:
         self.service._send_native_request("info", FRAME_INFO)
@@ -195,15 +209,44 @@ class DeviceServiceTests(unittest.TestCase):
         self.assertEqual(len(self.provider.requests), 3)
         self.assertFalse(self.service._event_active)
 
-    def test_legacy_event_size_limit_and_empty_file(self) -> None:
+    def test_legacy_event_file_larger_than_company_storage_is_downloaded_by_reported_length(self) -> None:
+        self.service._legacy_protocol = True
+        changes, messages = [], []
+        self.service.events_changed.connect(changes.append)
+        self.service.message.connect(lambda text, level: messages.append((text, level)))
+        self.service.request_events()
+        # A complete stream of unused BI slots, eight bytes above the old cap.
+        data = bytes(1024 * 1024 + 8)
+        size = bytes((LEGACY_FRAME_CHECK, LEGACY_STATUS_FILE_SIZE)) + struct.pack("<I", len(data))
+        self.service._handle_native_response("events_check", LEGACY_FRAME_STATUS, size)
+        for sequence, start in enumerate(range(0, len(data), 65000)):
+            chunk = struct.pack("<H", sequence) + data[start:start + 65000]
+            self.service._handle_native_response("events_chunk", LEGACY_FRAME_DOWNLOAD, chunk)
+        self.assertEqual(changes, [[]])
+        self.assertFalse(self.service._event_active)
+        self.assertFalse(any(level == "error" for _, level in messages))
+
+    def test_legacy_event_chunk_sequence_wraps_and_reassembles_exactly(self) -> None:
+        self.service._legacy_protocol = True
+        changes = []
+        self.service.events_changed.connect(changes.append)
+        self.service.request_events()
+        data = struct.pack("<H", 0x4000) + (12_600_000).to_bytes(6, "little")
+        size = bytes((LEGACY_FRAME_CHECK, LEGACY_STATUS_FILE_SIZE)) + struct.pack("<I", len(data))
+        self.service._handle_native_response("events_check", LEGACY_FRAME_STATUS, size)
+        self.service._event_sequence = 65535
+        self.service._handle_native_response("events_chunk", LEGACY_FRAME_DOWNLOAD, b"\xff\xff" + data[:4])
+        self.assertEqual(self.provider.requests[-1][2], b"\x00\x00")
+        self.service._handle_native_response("events_chunk", LEGACY_FRAME_DOWNLOAD, b"\x00\x00" + data[4:])
+        self.assertEqual(len(changes[0]), 1)
+        self.assertFalse(self.service._event_active)
+
+    def test_legacy_event_empty_file(self) -> None:
         self.service._legacy_protocol = True
         changes = []
         self.service.events_changed.connect(changes.append)
         with tempfile.TemporaryDirectory() as temporary, patch.dict("os.environ", {"LOCALAPPDATA": temporary}):
             self.service.request_events()
-            too_large = bytes((LEGACY_FRAME_CHECK, LEGACY_STATUS_FILE_SIZE)) + struct.pack("<I", MAX_EVENTS_FILE_SIZE + 1)
-            self.service._handle_native_response("events_check", LEGACY_FRAME_STATUS, too_large)
-            self.assertEqual(bytes(self.service._event_data), b"")
             empty = bytes((LEGACY_FRAME_CHECK, LEGACY_STATUS_FILE_SIZE)) + bytes(4)
             self.service._handle_native_response("events_check", LEGACY_FRAME_STATUS, empty)
         self.assertEqual(changes, [[]])

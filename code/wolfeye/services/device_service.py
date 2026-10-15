@@ -70,7 +70,6 @@ LEGACY_FRAME_DOWNLOAD = 0x13
 LEGACY_STATUS_FILE_SIZE = 0x07
 LEGACY_CHECK_DOWNLOAD = 0x02
 LEGACY_FILE_EVENTS = 0x02
-MAX_EVENTS_FILE_SIZE = 1024 * 1024  # Company EVENT_FILE_MAX_SIZE.
 EVENT_RETRIES = 2
 EVENT_COMMANDS = frozenset(("events", "events_check", "events_chunk"))
 
@@ -657,8 +656,6 @@ class DeviceService(QObject):
                             or payload[:2] != bytes((LEGACY_FRAME_CHECK, LEGACY_STATUS_FILE_SIZE))):
                         raise ValueError("device did not return the legacy events file size")
                     self._event_size = struct.unpack_from("<I", payload, 2)[0]
-                    if self._event_size > MAX_EVENTS_FILE_SIZE:
-                        raise ValueError(f"events file exceeds company limit: {self._event_size} bytes")
                     if self._event_size:
                         self._event_phase = "events_chunk"
                         self._event_retries = 0
@@ -672,10 +669,8 @@ class DeviceService(QObject):
                     if sequence != self._event_sequence:
                         raise ValueError(f"unexpected events chunk {sequence}; expected {self._event_sequence}")
                     remaining = self._event_size - len(self._event_data)
-                    if self._event_sequence == 65535 and len(payload) - 2 < remaining:
-                        raise ValueError("events download exceeds the 16-bit chunk sequence limit")
                     self._event_data.extend(payload[2:2 + remaining])
-                    self._event_sequence += 1
+                    self._event_sequence = (self._event_sequence + 1) & 0xFFFF
                     self._event_retries = 0
                     if len(self._event_data) < self._event_size:
                         self._request_next_event_chunk()

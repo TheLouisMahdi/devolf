@@ -69,7 +69,7 @@ int parse_blocks(const uint8_t* data, size_t size, std::vector<Block>& blocks) {
         offset += 2;
         const uint32_t type = header & 15;
         const uint32_t count = header >> 4;
-        if (!count || (type != M_TYPE_BI && type != M_TYPE_AI && type != M_TYPE_BC)) return -1;
+        if (type != M_TYPE_BI && type != M_TYPE_AI && type != M_TYPE_BC) return -1;
         const size_t bytes = type == M_TYPE_BI ? (count + 7) / 8 : count * (type == M_TYPE_AI ? 2 : 4);
         if (bytes > size - offset) return -1;
         blocks.push_back({type, count, data + offset, true});
@@ -87,7 +87,7 @@ int parse_legacy_blocks(const uint8_t* data, size_t size, std::vector<Block>& bl
         offset += 2;
         const uint32_t type = header & 15;
         const uint32_t count = header >> 4;
-        if (!count || (type != M_TYPE_BI && type != M_TYPE_AI && type != M_TYPE_BC)) return -1;
+        if (type != M_TYPE_BI && type != M_TYPE_AI && type != M_TYPE_BC) return -1;
         const size_t bytes = count * (type == M_TYPE_BI ? 1 : type == M_TYPE_AI ? 2 : 4);
         if (bytes > size - offset) return -1;
         blocks.push_back({type, count, data + offset, false});
@@ -551,16 +551,20 @@ int __cdecl be_measurements(const uint8_t* data, size_t size, BEPoint* out, size
         if (parse_legacy_blocks(data, size, blocks) < 0) return -1;
     }
     size_t used = 0;
+    uint32_t binary_offset = 0, analog_offset = 0, counter_offset = 0;
     for (const auto& block : blocks) {
         if (block.count > capacity - used || used + block.count > INT32_MAX) return -1;
+        auto& channel_offset = block.type == M_TYPE_BI ? binary_offset
+            : block.type == M_TYPE_AI ? analog_offset : counter_offset;
         for (uint32_t i = 0; i < block.count; ++i) {
             const uint32_t value = block.type == M_TYPE_BI
                 ? (block.binary_packed
                     ? ((block.values[i / 8] >> (i % 8)) & 1u)
                     : block.values[i])
                 : little(block.values + i * (block.type == M_TYPE_AI ? 2 : 4), block.type == M_TYPE_AI ? 2 : 4);
-            out[used++] = {block.type, i, value};
+            out[used++] = {block.type, channel_offset + i, value};
         }
+        channel_offset += block.count;
     }
     return static_cast<int>(used);
 }
@@ -576,7 +580,13 @@ int __cdecl be_measurements_named(
         if (parse_legacy_blocks(data, size, blocks) < 0) return -1;
     }
     size_t used = 0;
+    uint32_t named_types = 0;
     for (const auto& block : blocks) {
+        if (!block.count) continue;
+        // A repeated channel is a valid wire stream, but one model point map
+        // cannot name both blocks. Let the indexed decoder retain every value.
+        if (named_types & block.type) return -1;
+        named_types |= block.type;
         if (block.type == M_TYPE_BC) {
             if (block.count > capacity - used) return -1;
             for (uint32_t i = 0; i < block.count; ++i) {
@@ -680,7 +690,7 @@ int __cdecl be_frame_build(
     uint8_t type, const uint8_t* payload, size_t payload_size,
     uint8_t* out, size_t capacity
 ) {
-    if (!out || (payload_size && !payload) || payload_size > MAX_DATA_SIZE || capacity < payload_size + 7) return -1;
+    if (!out || (payload_size && !payload) || payload_size > BE_FRAME_MAX_PAYLOAD || capacity < payload_size + 7) return -1;
     out[0] = START_CAT;
     out[1] = START_DOG;
     put_little(out + 2, static_cast<uint32_t>(payload_size), 2);
@@ -696,8 +706,7 @@ int __cdecl be_frame_decode(
 ) {
     if (!frame || !type || size < 7 || frame[0] != START_CAT || frame[1] != START_DOG) return -1;
     const size_t payload_size = little(frame + 2, 2);
-    // Receive length is a uint16 wire field. MAX_DATA_SIZE is the company's
-    // outgoing workspace size, not a reason to discard larger event responses.
+    // Frame length comes from the wire, independently of the file chunk size.
     if (size != payload_size + 7 || payload_size > capacity || (payload_size && !payload)) return -1;
     if (frame_crc(frame + 2, payload_size + 3) != little(frame + 5 + payload_size, 2)) return -2;
     *type = frame[4];

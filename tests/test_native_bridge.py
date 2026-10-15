@@ -386,15 +386,18 @@ class NativeBridgeTests(unittest.TestCase):
         self.assertEqual(snapshot.analog["Uab"], 11.0)
         self.assertIn("Battery Voltage", snapshot.analog)
 
-    def test_measurement_decoder_rejects_profile_from_another_known_revision(self) -> None:
+    def test_different_measurement_profile_keeps_wire_values_without_wrong_names(self) -> None:
         payload = (
             struct.pack("<H", (394 << 4) | 0x01)
             + bytes(50)
             + struct.pack("<H", (121 << 4) | 0x02)
             + bytes(242)
         )
-        with self.assertRaisesRegex(ValueError, "does not match FC22AR revision 51"):
-            decode_measurements(payload, "FC22AR", 51)
+        snapshot = decode_measurements(payload, "FC22AR", 51)
+        self.assertEqual(len(snapshot.binary), 394)
+        self.assertEqual(len(snapshot.analog), 121)
+        self.assertEqual(snapshot.analog["AI 120"], 0)
+        self.assertNotIn("Ia", snapshot.analog)
 
     def test_unknown_device_profile_uses_explicit_generic_names(self) -> None:
         payload = (
@@ -433,15 +436,17 @@ class NativeBridgeTests(unittest.TestCase):
         )
         self.assertEqual(snapshot.analog["Ia"], 0.0)
 
-    def test_partial_native_measurement_profile_is_rejected_for_known_device(self) -> None:
+    def test_partial_measurement_profile_retains_every_advertised_point(self) -> None:
         payload = (
             struct.pack("<H", (15 << 4) | 0x01)
             + bytes([0b00001000, 0])
             + struct.pack("<H", (15 << 4) | 0x02)
             + b"".join(struct.pack("<H", value) for value in range(15))
         )
-        with self.assertRaisesRegex(ValueError, "does not match FC22AR revision 100"):
-            decode_measurements(payload, "FC22AR", 100)
+        snapshot = decode_measurements(payload, "FC22AR", 100)
+        self.assertEqual(len(snapshot.binary), 15)
+        self.assertTrue(snapshot.binary["BI 3"])
+        self.assertEqual(snapshot.analog["AI 14"], 14)
 
     def test_event_timestamp_uses_company_tehran_offset(self) -> None:
         payload = struct.pack("<H", 0x4000) + (12_600_000).to_bytes(6, "little")
@@ -578,8 +583,7 @@ class NativeBridgeTests(unittest.TestCase):
         for length in (5120, 5121, 5512, 8192, 65535):
             body = bytes(length)
             self.assertEqual(decode_native_frame(wire_frame(body)), (1, body))
-        with self.assertRaises(ValueError):
-            build_native_frame(7, bytes(5512))  # Outgoing company limit stays intact.
+        self.assertEqual(decode_native_frame(build_native_frame(7, bytes(5512))), (7, bytes(5512)))
         self.assertEqual(decode_native_frame(wire_frame(payload)), (1, payload))
         for legacy in (False, True):
             listener = socket.socket()

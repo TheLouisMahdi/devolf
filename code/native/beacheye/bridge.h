@@ -7,6 +7,8 @@ extern "C" {
 #endif
 
 #define BE_API __declspec(dllexport)
+/* Maximum encodable length in the company's two-byte frame length field. */
+#define BE_FRAME_MAX_PAYLOAD UINT16_MAX
 
 typedef struct {
     uint32_t model, firmware, hardware, bootloader, build, flags;

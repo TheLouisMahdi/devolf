@@ -301,11 +301,12 @@ class NativeDataProvider:
             _native().be_provider_stop(self._handle)
 
     def request(self, tag: int, frame_type: int, payload: bytes = b"") -> None:
+        self._last_error = ""
         source = ct.create_string_buffer(payload) if payload else None
         if _native().be_provider_request(
             self._handle, tag, frame_type, source, len(payload)
         ) < 0:
-            raise OSError("Native DataProvider rejected the request")
+            raise OSError(self._last_error or "Native DataProvider rejected the request")
 
     def update_file(
         self, kind: int, path: str, hardware: int, bootloader: int
@@ -356,11 +357,12 @@ def decode_measurements(
     """Decode the self-describing measurement blocks used by DataProvider.
 
     The named bridge provides the model/revision-specific ordering used by the
-    company UI.  A known model/revision must match that table exactly: silently
-    applying an older prefix table is dangerous because it gives real points
-    the wrong BI/AI names.  Generic labels are used only when model/revision is
-    genuinely unknown.
+    company UI when the point counts match. Other complete blocks retain their
+    wire indices instead of rejecting a valid response or borrowing names from
+    a different revision.
     """
+    if not _model_code(model):
+        return _decode_measurements_by_wire_schema(payload)
     points = (_NamedPoint * max(1, len(payload) * 8))()
     buffer = ct.create_string_buffer(payload)
     count = _native().be_measurements_named(
@@ -372,11 +374,6 @@ def decode_measurements(
         len(points),
     )
     if count < 0:
-        if _model_code(model) and build:
-            raise ValueError(
-                f"Measurement profile does not match {normalize_device_model(model)} "
-                f"revision {build} ({len(payload)} bytes)"
-            )
         return _decode_measurements_by_wire_schema(payload)
     analog: dict[str, float] = {}
     binary: dict[str, bool] = {}
@@ -400,7 +397,7 @@ def _decode_measurements_by_wire_schema(payload: bytes) -> MeasurementSnapshot:
     analog: dict[str, float] = {}
     binary: dict[str, bool] = {}
     counters: dict[str, int] = {}
-    # This is a last-resort path for an unidentified device.  Never borrow
+    # This path accepts complete blocks with an unrecognized point map. Never borrow
     # labels from another revision: a plausible but incorrect name is worse
     # than an explicit generic index for protection measurements.
     for i in range(count):
@@ -490,11 +487,13 @@ def decode_signal(payload: bytes) -> list[list[float]]:
 def build_native_frame(frame_type: int, payload: bytes = b"") -> bytes:
     if not 0 <= frame_type <= 0xFF:
         raise ValueError("frame_type must fit in one byte")
+    if len(payload) > 0xFFFF:
+        raise ValueError("Frame data does not fit the protocol's two-byte length field")
     source = ct.create_string_buffer(payload)
     output = (ct.c_ubyte * (len(payload) + 7))()
     size = _native().be_frame_build(frame_type, source, len(payload), output, len(output))
     if size < 0:
-        raise ValueError("payload exceeds the original LightStream limit")
+        raise ValueError("The native bridge could not build the frame")
     return bytes(output[:size])
 
 

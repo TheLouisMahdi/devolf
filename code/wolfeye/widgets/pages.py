@@ -173,16 +173,16 @@ class StatusPage(QWidget):
         self.firmware.set_value(f"FW {info.firmware} / HW {info.hardware}")
 
     def set_measurements(self, data: MeasurementSnapshot) -> None:
-        self.voltage.set_value(
-            f"{data.analog.get('Battery Voltage', 0) / 10:.1f} V"
-        )
-        self.temperature.set_value(
-            f"{data.analog.get('Temperature', 0) / 10:.1f} °C"
-        )
+        def measured(name: str, scale: float, unit: str) -> str:
+            value = data.analog.get(name)
+            return "—" if value is None else f"{value / scale:.1f} {unit}"
+
+        self.voltage.set_value(measured("Battery Voltage", 10, "V"))
+        self.temperature.set_value(measured("Temperature", 10, "°C"))
         for name, card in self.current_cards.items():
-            card.set_value(f"{data.analog.get(name, 0) / 10:.1f} A")
+            card.set_value(measured(name, 10, "A"))
         for name, card in self.voltage_cards.items():
-            card.set_value(f"{data.analog.get(name, 0) / 1000:.1f} kV")
+            card.set_value(measured(name, 1000, "kV"))
         opened = data.binary.get("Open", False)
         closed = data.binary.get("Closed", False)
         self.breaker.setText(
@@ -219,10 +219,10 @@ class StatusPage(QWidget):
         }
         for title, keys in mapping.items():
             enabled = next(
-                (data.binary[key] for key in keys if key in data.binary), False
+                (data.binary[key] for key in keys if key in data.binary), None
             )
             label = self.summary_labels[title]
-            label.setText("● ON" if enabled else "● OFF")
+            label.setText("● UNKNOWN" if enabled is None else "● ON" if enabled else "● OFF")
             label.setStyleSheet(f"color: {'#56d694' if enabled else '#68788e'}")
 
 

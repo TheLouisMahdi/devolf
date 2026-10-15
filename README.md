@@ -105,14 +105,21 @@ API. Simulated read/write and measurement tests cover builds 50, 51, 52, 100,
 company wire format; a future firmware format change requires a new source
 audit. See [compatibility and cleanup details](docs/UPSTREAM_SYNC.md#single-source-compatibility-and-cleanup).
 
-Event reception handles the 16-bit wire length independently of the company's
-5 KiB outgoing limit, including 5,512-byte responses. Serialized BI/AI/Counter
+Frame transmission and reception use the protocol's two-byte length field,
+without a general 5 KiB payload rejection. Native requests reserve one byte
+for the company sequence; legacy requests use the full frame body. Firmware
+file chunks retain the company's `MAX_DATA_SIZE - 4` partitioning.
+Complete measurements with a different point count are displayed by wire index
+(`BI N`, `AI N`, `Counter N`); matching profiles retain company names. Empty
+channels and repeated channel blocks are supported without dropping values.
+Event reception includes 5,112-byte and larger responses. Serialized BI/AI/Counter
 streams and legacy rings share the company point map. Event record sizes come
 from the pinned BeachEye schema; complete-stream validation also recognizes
 deployed short Counter records caused by the older company serializer. Layout
 selection does not depend on a fixed response size, device model or build.
 Both 16-bit and 32-bit transmitted Counter values retain their width.
-Interrupted downloads
+Event file downloads follow the device's reported length without a desktop
+1 MiB rejection; chunk sequences wrap within their two-byte field. Interrupted downloads
 retry twice; invalid responses are saved with device metadata under
 `%LOCALAPPDATA%\DEVolf\diagnostics\events-response.bin` and `.json`.
 See [event verification and remaining limits](docs/UPSTREAM_SYNC.md#event-reception-correction).

@@ -112,8 +112,42 @@ receive rejection threshold. Both cases now have regression coverage.
 
 The receive parser accepts the full unsigned 16-bit wire length (up to 65,535
 payload bytes), keeps CRC/sequence checks and handles fragmented TCP delivery.
-Outgoing frames and update chunks keep the pinned company's 5 KiB limit.
+At that stage, outgoing frames and update chunks kept the 5 KiB policy.
+The general outgoing rejection was subsequently removed; see the payload audit below.
 This changes the desktop receive buffer policy, not the company's serializers.
+
+### Payload policy audit (2026-10-15)
+
+Audited WolfEye `master` at `989f9fffe4b58bce5b98213de945625780addcda`
+and BeachEye `ver_50_remaster` at `18d5e1696730c1167cae854f83d77eb0c20d9ac5`.
+BeachEye `include/ls_config.h:5` defines `MAX_DATA_SIZE = 1024 * 5`.
+WolfEye `DataProvider/src/DataProvider.cpp:1309–1310` uses that value minus four
+bytes to partition firmware uploads. `Send` at line 342 writes `frame->Used()`;
+`MeasurementDeserialize` at line 961 processes the typed BI/AI/CC stream.
+These source constants and serializers have not been changed.
+
+DEVolf's vector-backed frame builder and request queue no longer use file chunk
+size as a general frame rejection rule. The two-byte length field permits
+65535 body bytes; native requests account for their one-byte sequence, while
+legacy requests have no sequence overhead. Bounds, CRC and response sequencing
+remain checked. Upload partitioning remains separate from frame size.
+The desktop no longer treats BeachEye's `EVENT_FILE_MAX_SIZE` storage constant
+as a download rejection threshold. It follows the device's reported uint32 file
+length, accepts incremental chunks without preallocating the reported size, and
+wraps chunk sequences within their uint16 field. Empty/wrong-sequence chunks
+remain retryable; a complete file is still decoded and checked structurally.
+
+Measurements no longer fail solely because their point counts differ from the
+selected model/build catalog. Complete typed blocks then use explicit wire-index
+labels, preserving every value without assigning names from another profile.
+Matching profiles retain company labels. Empty channels are accepted, repeated
+channel blocks have continuous indices, and incomplete/unknown blocks still
+produce a decoding error. The existing CC16/CC32 event compatibility stays in use.
+
+Regressions cover send/receive sizes around 5120 and through 65535, native versus
+legacy sequence overhead, fragmented measurements/events, CRC rejection, both
+FC22 models, a 65534-byte measurement stream, empty channels, repeated blocks,
+downloads beyond 1 MiB and sequence rollover.
 
 Legacy rings now support binary, analog and 32-bit counter records, the exact
 unwrapped full-buffer boundary, wrapped heads and empty buffers. Serialized

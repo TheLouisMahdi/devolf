@@ -36,6 +36,17 @@ class StatusPageTests(unittest.TestCase):
 
         self.assertEqual(page.temperature.value_label.text(), "27.0 °C")
 
+    def test_indexed_measurements_display_without_inventing_named_status_values(self) -> None:
+        snapshot = MeasurementSnapshot(analog={"AI 0": 270.0}, binary={"BI 0": True})
+        status, measurements = StatusPage(), MeasurementPage()
+        status.set_measurements(snapshot)
+        measurements.update_snapshot(snapshot)
+        self.assertEqual(measurements.analog_table.item(0, 1).text(), "AI 0")
+        self.assertEqual(measurements.analog_table.item(0, 2).text(), "270.00")
+        self.assertEqual(status.temperature.value_label.text(), "—")
+        self.assertEqual(status.voltage.value_label.text(), "—")
+        self.assertEqual(status.summary_labels["AC supply"].text(), "● UNKNOWN")
+
     def test_sectionalizer_uses_sectionalizing_status(self) -> None:
         page = StatusPage()
         page.set_device_model("FC22S")

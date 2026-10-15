@@ -185,11 +185,16 @@ public:
     }
 
     int request(uint32_t tag, uint8_t frame_type, const uint8_t* payload, size_t payload_size) {
-        if ((payload_size && !payload) || payload_size + 1 > MAX_DATA_SIZE) {
-            return fail("Native request payload is invalid or too large.");
+        if (payload_size && !payload) {
+            return fail("Native request data is missing.");
         }
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock<std::mutex> lock(mutex_);
         if (!connected_) return -1;
+        const size_t sequence_size = legacy_protocol_ ? 0 : 1;
+        if (payload_size > BE_FRAME_MAX_PAYLOAD - sequence_size) {
+            lock.unlock();
+            return fail("Native request does not fit the protocol's two-byte length field.");
+        }
         std::vector<uint8_t> body;
         if (payload_size) body.assign(payload, payload + payload_size);
         queue_.push_back({tag, frame_type, std::move(body)});
@@ -390,8 +395,7 @@ private:
             if (receive_buffer_.size() < 7) return;
             const size_t payload_size = receive_buffer_[2] |
                 (static_cast<size_t>(receive_buffer_[3]) << 8);
-            // The uint16 wire length bounds allocation to 65535 bytes. Event
-            // replies can exceed the outgoing 5 KiB company workspace.
+            // Allocate from the uint16 wire length, independently of file chunks.
             const size_t total = payload_size + 7;
             if (receive_buffer_.size() < total) return;
             uint8_t frame_type = 0;
