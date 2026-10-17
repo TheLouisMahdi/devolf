@@ -33,66 +33,27 @@ from wolfeye.numeric_schema import TIME
 from wolfeye.widgets.numeric_editor import configure_numeric_editor, numeric_value, set_numeric_value
 
 
-# Constants copied from the company's TCCCalculator.cpp. Values returned by the
-# Python implementation are seconds; the original calculator returns ms.
-_IEC_CONSTANTS = {
-    "IEC EI": (80.0, 2.0),
-    "IEC I": (13.5, 1.0),
-    "IEC LTI": (0.14, 0.02),
-    "IEC VI": (120.0, 1.0),
-}
-_ANSI_CONSTANTS = {
-    "ANSI EI": (6.407, 0.025, 3.0, 2.0),
-    "ANSI I": (2.855, 0.0712, 1.346, 2.0),
-    "ANSI LTEI": (0.0086, 0.0185, 0.46, 0.02),
-    "ANSI LTI": (0.00172, 0.0037, 0.092, 0.02),
-    "ANSI LTVI": (1.281, 0.005, 0.6, 2.0),
-    "ANSI STEI": (64.07, 0.25, 30.0, 2.0),
-    "ANSI STI": (28.55, 0.0712, 13.46, 2.0),
-    "ANSI VI": (0.086, 0.185, 4.6, 0.02),
-}
-
-
 def calculate_trip_time_s(element: dict[str, Any], current_a: float) -> float | None:
-    """Return the company TCC trip time for one element, in seconds."""
-    pickup = max(0.0, float(element.get("pickup_a", 0.0)))
-    if pickup <= 0.0:
-        return None
+    """Call the unchanged company WolfEye calculator; convert UI seconds to ms."""
+    from wolfeye.services.beacheye import calculate_tcc_trip_ms
 
     curve_type = str(element.get("type", "TD"))
-    if curve_type == "TD":
-        return max(0.0, float(element.get("tripping_time_s", 0.0)))
-
-    ratio = current_a / pickup
-    multiplier = float(element.get("time_multiplier", 1.0))
-    minimum = max(0.0, float(element.get("definite_min_time_s", 0.0)))
-    maximum = max(minimum, float(element.get("max_tripping_time_s", 120.0)))
-    if current_a <= pickup:
-        return maximum
-
-    try:
-        if curve_type in _IEC_CONSTANTS:
-            coefficient, exponent = _IEC_CONSTANTS[curve_type]
-            trip = coefficient * multiplier / (math.pow(ratio, exponent) - 1.0)
-        elif curve_type in _ANSI_CONSTANTS:
-            coefficient, offset, _reset, exponent = _ANSI_CONSTANTS[curve_type]
-            trip = (
-                coefficient / (math.pow(ratio, exponent) - 1.0) + offset
-            ) * multiplier
-        else:
-            return None
-    except (OverflowError, ZeroDivisionError):
+    if curve_type not in TCC_TYPES:
         return None
-
-    if not math.isfinite(trip):
+    pickup = int(element.get("pickup_a", 0))
+    if not 0 < pickup <= 65535 or not math.isfinite(current_a):
         return None
-    # TCCCalculator.cpp converts the calculated value to integer milliseconds
-    # before applying Tmin/Tmax.  Its Ta field is editable but is not used by
-    # the company calculator.
-    trip_ms = int(trip * 1000.0)
-    minimum_ms = round(minimum * 1000.0)
-    maximum_ms = round(maximum * 1000.0)
-    return min(maximum_ms, max(minimum_ms, trip_ms)) / 1000.0
+    if not 0 <= current_a <= 65535:
+        return None
+    minimum = round(float(element.get("definite_min_time_s", 0)) * 1000)
+    maximum = round(float(element.get("max_tripping_time_s", 120)) * 1000)
+    trip_ms = calculate_tcc_trip_ms(
+        TCC_TYPES.index(curve_type), pickup,
+        float(element.get("time_multiplier", 1)), minimum, maximum,
+        round(float(element.get("time_adder_s", 0)) * 1000),
+        round(float(element.get("tripping_time_s", 0)) * 1000), int(current_a),
+    )
+    return trip_ms / 1000 if trip_ms is not None else None
 
 
 @dataclass(frozen=True)

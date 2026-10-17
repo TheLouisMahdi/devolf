@@ -120,9 +120,7 @@ def _ip_parts(value: Any) -> list[int]:
 
 
 def update_config_from_native(config: dict[str, Any], native: dict[str, Any]) -> None:
-    """Populate the existing UI model from the company's Settings JSON."""
-    if "legacy_payload_hex" in native:
-        return
+    """Populate the existing UI model from the native Configure snapshot."""
     general = config["general"]
     measurement = general["measurement"]
     system = native["sy"]
@@ -231,9 +229,7 @@ def update_config_from_native(config: dict[str, Any], native: dict[str, Any]) ->
 
 
 def update_native_from_config(native: dict[str, Any], config: dict[str, Any]) -> None:
-    """Apply the existing UI model to the company's Settings JSON in place."""
-    if "legacy_payload_hex" in native:
-        return
+    """Apply the existing UI model to the native Configure snapshot in place."""
     validate_numeric_config(config)
     general = config["general"]
     measurement = general["measurement"]
@@ -496,9 +492,7 @@ def _write_global_system(general: dict[str, Any], native: dict[str, Any]) -> Non
            round(float(source["auto_max_slip_hz"]) * 100), round(float(source["max_roc_slip_hz_s"]) * 100), int(bool(source["anti_motoring_s"]))],
         t=_to_ms(source["waiting_time_s"]),
     )
-    native_functions = native["sy"].setdefault("fn", [])
-    while len(native_functions) < len(system["functions"]):
-        native_functions.append({"t": 500, "v": 0, "o": [0, 0, 0, 0], "s": [0] * 6})
+    native_functions = native["sy"].get("fn", [])
     for raw, function in zip(native_functions, system["functions"]):
         raw["t"] = _to_ms(function["time_s"])
         raw["v"] = int(function["analog_compared_to"])
@@ -620,16 +614,15 @@ def _read_group(target: dict[str, Any], source: dict[str, Any]) -> None:
 def _write_group(source: dict[str, Any], target: dict[str, Any]) -> None:
     for name, key in (("oc", "o"), ("ef", "e"), ("nps", "nps")):
         _write_ocef(source[name], target[key])
-    target["cm"] = [
-        round(float(source[name]["elements"][element_index]["max_current_multiplier"]) * 100)
-        for name in ("oc", "ef", "nps")
-        for element_index in (1, 4)
-    ]
+    if "cm" in target:
+        target["cm"] = [round(float(source[name]["elements"][index]["max_current_multiplier"]) * 100)
+                        for name in ("oc", "ef", "nps") for index in (1, 4)]
+    if "s" in target["sc"]:
+        target["sc"]["s"] = _index(("ALARM", "TRIP/LOCK"), source["sectionalizing"]["state"])
     _write_sef(source["sef"], target["sf"])
     target["c"].update(c=float(source["clp"]["multiplier"]), t=_to_ms(float(source["clp"]["time_min"]) * 60), r=_to_ms(float(source["clp"]["recognition_min"]) * 60))
     target["i"].update(i=float(source["inrush"]["multiplier"]), t=_to_ms(source["inrush"]["time_s"]))
     target["sc"].update(
-        s=_index(("ALARM", "TRIP/LOCK"), source["sectionalizing"]["state"]),
         t=int(source["sectionalizing"]["max_trip_count"]),
         r=_to_ms(source["sectionalizing"]["reset_time_s"]),
     )
@@ -689,7 +682,7 @@ def _write_element(
             tmi=_to_ms(source["definite_min_time_s"]), tma=_to_ms(source["max_tripping_time_s"]),
             ta=_to_ms(source["time_adder_s"]), tr=_to_ms(source["reset_time_s"]),
         )
-        if fast_trip:
+        if fast_trip and "mm" in values:
             values["mm"] = int(bool(source["max_mode"]))
 
 

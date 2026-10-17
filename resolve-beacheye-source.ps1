@@ -1,10 +1,13 @@
 [CmdletBinding()]
-param([switch]$UpdateBeachEye)
+param(
+    [switch]$UpdateBeachEye,
+    [ValidateSet("BeachEye", "WolfEye")][string]$Dependency = "BeachEye"
+)
 
 $ErrorActionPreference = "Stop"
 
 $projectRoot = $PSScriptRoot
-$configPath = Join-Path $projectRoot "beacheye-source.json"
+$configPath = Join-Path $projectRoot $(if ($Dependency -eq "WolfEye") { "wolfeye-source.json" } else { "beacheye-source.json" })
 $requiredFiles = @(
     "include\Configure.h",
     "include\Database.h",
@@ -13,6 +16,11 @@ $requiredFiles = @(
     "src\Settings.cpp",
     "src\cJSON_Imp.cpp"
 )
+
+if ($Dependency -eq "WolfEye") {
+    $requiredFiles = @("WolfEye\include\TCCCalculator.h", "WolfEye\src\TCCCalculator.cpp",
+        "WolfEye\src\SettingsView.cpp", "DataProvider\src\DataProvider.cpp")
+}
 
 function Get-PrivateCacheRoot {
     if (-not [string]::IsNullOrWhiteSpace($env:DEVOLF_BEACHEYE_CACHE)) {
@@ -27,6 +35,11 @@ function Get-PrivateCacheRoot {
 }
 
 $cacheRoot = Get-PrivateCacheRoot
+$projectPrefix = [IO.Path]::GetFullPath($projectRoot).TrimEnd('\') + '\'
+$cachePrefix = [IO.Path]::GetFullPath($cacheRoot).TrimEnd('\') + '\'
+if ($cachePrefix.StartsWith($projectPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "BeachEye source cache must be outside the project: $cacheRoot"
+}
 
 function Test-BeachEyeSource([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
@@ -68,7 +81,9 @@ function Get-SafeDirectoryName([string]$Value) {
 function Assert-CacheChild([string]$Path) {
     $fullRoot = [IO.Path]::GetFullPath($cacheRoot).TrimEnd('\') + '\'
     $fullPath = [IO.Path]::GetFullPath($Path)
-    if (-not $fullPath.StartsWith($fullRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    $projectPath = [IO.Path]::GetFullPath($projectRoot).TrimEnd('\') + '\'
+    if (-not $fullPath.StartsWith($fullRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        $fullPath.StartsWith($projectPath, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Refusing to modify a directory outside the private dependency cache: $fullPath"
     }
 }
@@ -94,98 +109,11 @@ function Test-CachedRevision([string]$Path, [string]$ExpectedCommit) {
     return ([string]($revision.Output | Select-Object -Last 1)).Trim() -eq $ExpectedCommit
 }
 
-function Enable-DesktopCompatibility([string]$Path) {
-    # Private revisions must carry their own desktop guard. The public tree
-    # deliberately contains neither the private header nor a source patch.
-    $measureTypePath = Join-Path $Path "include\MeasureType.h"
-    $measureType = Get-Content -LiteralPath $measureTypePath -Raw
-    $usesFirmwareScatter = $measureType.Contains("GetTick()") -and
-        $measureType.Contains("global.scatter_buffer")
-    $hasDesktopGuard = $measureType.Contains("#ifndef _WIN32") -or
-        $measureType.Contains("#if !defined(_WIN32)")
-    if ($usesFirmwareScatter -and -not $hasDesktopGuard) {
-        throw "The selected private BeachEye revision lacks its required Windows desktop guard in include\MeasureType.h."
+function Assert-PristineSource([string]$Path) {
+    $status = Invoke-NativeCommand git @("-C", $Path, "status", "--porcelain", "--untracked-files=all")
+    if ($status.ExitCode -ne 0 -or -not [string]::IsNullOrWhiteSpace(($status.Output -join ""))) {
+        throw "BeachEye source must be an unmodified company checkout: $Path"
     }
-
-    # Revision 50 declares seven physical output timers but serializes eight
-    # output records. Apply a narrow cache-only safety transform without
-    # storing private source or a source diff in this public repository.
-    $configurePath = Join-Path $Path "include\Configure.h"
-    $configure = Get-Content -LiteralPath $configurePath -Raw
-    $jsonPath = Join-Path $Path "src\cJSON_Imp.cpp"
-    $json = Get-Content -LiteralPath $jsonPath -Raw
-    $changed = $false
-
-    $unsafeReadPattern = '(?m)^(?<indent>[ \t]*)GET_O_GPIO\(item,\s*\(\*output\),\s*c->do_time\[doutput_c\+\+\]\);\s*\\\s*$'
-    if ($configure.Contains('do_time[7]') -and [regex]::IsMatch($json, $unsafeReadPattern)) {
-        $macroTimerPattern = '(?m)^[ \t]*GET_NUM\(obj,\s*"t",\s*do_time\);\s*\\\r?\n'
-        $writerPattern = '(?m)^(?<indent>[ \t]*)JSON_NUM_ADD_DEF\(output,\s*"t",\s*c->do_time\[i\],\s*i32_time_0p01_120,\s*1000\);\s*$'
-        if ([regex]::Matches($json, $macroTimerPattern).Count -ne 1 -or
-            [regex]::Matches($json, $unsafeReadPattern).Count -ne 1 -or
-            [regex]::Matches($json, $writerPattern).Count -ne 1) {
-            throw "The selected private BeachEye revision has an unknown digital-output JSON layout."
-        }
-
-        $json = [regex]::Replace($json, $macroTimerPattern, "", 1)
-
-        $readMatch = [regex]::Match($json, $unsafeReadPattern)
-        $indent = $readMatch.Groups["indent"].Value
-        $safeRead = @(
-            "${indent}GET_O_GPIO(item, (*output), c->do_time[0]); \",
-            "${indent}if(doutput_c < 7) \",
-            "${indent}{ \",
-            "${indent}    cJSON* operation_time = cJSON_GetObjectItem(item, `"t`"); \",
-            "${indent}    if(cJSON_IsNumber(operation_time)) \",
-            "${indent}        c->do_time[doutput_c] = operation_time->valuedouble; \",
-            "${indent}} \",
-            "${indent}doutput_c++; \"
-        ) -join [Environment]::NewLine
-        $json = $json.Substring(0, $readMatch.Index) + $safeRead +
-            $json.Substring($readMatch.Index + $readMatch.Length)
-
-        $writerMatch = [regex]::Match($json, $writerPattern)
-        $indent = $writerMatch.Groups["indent"].Value
-        $safeWriter = @(
-            "${indent}if(i < 7)",
-            "${indent}{",
-            "${indent}    JSON_NUM_ADD_DEF(output, `"t`", c->do_time[i], i32_time_0p01_120, 1000);",
-            "${indent}}"
-        ) -join [Environment]::NewLine
-        $json = $json.Substring(0, $writerMatch.Index) + $safeWriter +
-            $json.Substring($writerMatch.Index + $writerMatch.Length)
-        $changed = $true
-    }
-
-    if ($configure.Contains('do_time[7]')) {
-        $safeWriterPattern = '(?s)if\s*\(i\s*<\s*7\).*?JSON_NUM_ADD_DEF\(output,\s*"t",\s*c->do_time\[i\],\s*i32_time_0p01_120,\s*1000\);'
-        if ($json -match 'c->do_time\[doutput_c\+\+\]' -or
-            -not [regex]::IsMatch($json, $safeWriterPattern)) {
-            throw "The private BeachEye digital-output JSON safety transform was not applied completely."
-        }
-    }
-
-    # WolfEye master edits Configure directly with numeric validation disabled.
-    # The JSON export helper otherwise resets out-of-menu numeric values in
-    # Configure while merely reading them. Keep numeric export lossless in the
-    # desktop cache; enum validation and the firmware source remain unchanged.
-    $numericMacroPattern = '(?ms)^#define JSON_NUM_ASSERT_DEF\(.*?(?=^#define JSON_NUM_ADD\()'
-    if ([regex]::Matches($json, $numericMacroPattern).Count -ne 1) {
-        throw "The private BeachEye numeric JSON export layout is not recognized."
-    }
-    $numericMacro = "#define JSON_NUM_ASSERT_DEF(obj, value, attr, def) JSON_NUM_ASSERT(obj, value)" +
-        [Environment]::NewLine + [Environment]::NewLine
-    $losslessJson = [regex]::Replace($json, $numericMacroPattern, $numericMacro, 1)
-    if ($losslessJson -ne $json) {
-        $json = $losslessJson
-        $changed = $true
-    }
-
-    if ($changed) {
-        [IO.File]::WriteAllText($jsonPath, $json, [Text.UTF8Encoding]::new($false))
-    }
-    Set-Content -LiteralPath (Join-Path $Path ".devolf-desktop-ready") `
-        -Value "DEVolf desktop compatibility applied outside the public repository." `
-        -Encoding ascii
 }
 
 if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
@@ -201,8 +129,10 @@ catch {
 $Repository = [string]$config.repository
 $Branch = [string]$config.branch
 $Commit = [string]$config.commit
-if ($Repository -cne "majidnow/BeachEye" -or $Branch -cne "ver_50_remaster") {
-    throw "DEVolf requires majidnow/BeachEye branch ver_50_remaster in beacheye-source.json."
+$expectedRepository = if ($Dependency -eq "WolfEye") { "majidnow/wolfeye" } else { "majidnow/BeachEye" }
+$expectedBranch = if ($Dependency -eq "WolfEye") { "master" } else { "ver_50_remaster" }
+if ($Repository -cne $expectedRepository -or $Branch -cne $expectedBranch) {
+    throw "DEVolf requires $expectedRepository branch $expectedBranch in $configPath."
 }
 if ($Commit -notmatch '^[0-9a-fA-F]{40}$') {
     throw "BeachEye commit must be a full 40-character SHA: $Commit"
@@ -234,18 +164,18 @@ if ($remoteCommit -notmatch '^[0-9a-f]{40}$') {
 
 $safeBranch = Get-SafeDirectoryName $Branch
 $safeRepository = Get-SafeDirectoryName ($Repository -replace '/', '__')
-$repositoryCache = Join-Path $cacheRoot $safeRepository
+$repositoryCache = Join-Path (Join-Path $cacheRoot "upstream") $safeRepository
 $branchCache = Join-Path $repositoryCache $safeBranch
 $snapshotPath = Join-Path $branchCache $remoteCommit
 
 if (Test-CachedRevision $snapshotPath $remoteCommit) {
-    Enable-DesktopCompatibility $snapshotPath
+    Assert-PristineSource $snapshotPath
     Write-Host "Using authenticated private BeachEye cache: $Repository@$Branch ($($remoteCommit.Substring(0, 12)))"
     $sourceKind = "private-cache"
 }
 else {
     if (Test-Path -LiteralPath $snapshotPath) {
-        Remove-CacheDirectory $snapshotPath
+        throw "The existing BeachEye cache is not the expected company checkout: $snapshotPath"
     }
     New-Item -ItemType Directory -Path $branchCache -Force | Out-Null
     $stagingPath = Join-Path $branchCache (".staging-" + [Guid]::NewGuid().ToString("N"))
@@ -266,7 +196,9 @@ else {
         if ($checkout.ExitCode -ne 0 -or -not (Test-BeachEyeSource $stagingPath)) {
             throw "The private BeachEye checkout is incomplete."
         }
-        Enable-DesktopCompatibility $stagingPath
+        Assert-PristineSource $stagingPath
+        Assert-CacheChild $stagingPath
+        Assert-CacheChild $snapshotPath
         Move-Item -LiteralPath $stagingPath -Destination $snapshotPath
         $sourceKind = "private-download"
     }

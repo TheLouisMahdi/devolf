@@ -33,6 +33,8 @@ class MeasurementSnapshot:
     binary: dict[str, bool] = field(default_factory=dict)
     counters: dict[str, int] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=datetime.now)
+    analog_indices: dict[str, int] = field(default_factory=dict)
+    binary_indices: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass

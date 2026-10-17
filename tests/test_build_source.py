@@ -28,7 +28,7 @@ class BuildSourceTests(unittest.TestCase):
         self.manifest.write_text(self.original, encoding="utf-8")
         self.cache = self.root / "private-cache"
         for commit in (self.old, self.latest):
-            snapshot = self.cache / "majidnow__BeachEye/ver_50_remaster" / commit
+            snapshot = self.cache / "upstream/majidnow__BeachEye/ver_50_remaster" / commit
             (snapshot / ".git").mkdir(parents=True)
             for name in ("include/Configure.h", "include/Database.h", "include/Settings.h",
                          "include/MeasureType.h", "src/Database.cpp", "src/Settings.cpp"):
@@ -47,6 +47,7 @@ class BuildSourceTests(unittest.TestCase):
             "tool, *args = sys.argv[1:]\n"
             "with open(os.environ['DEVOLF_TEST_COMMANDS'], 'a') as f: f.write(json.dumps([tool, *args])+'\\n')\n"
             "if tool == 'git' and args[-2:] == ['rev-parse', 'HEAD']: print(Path(args[1]).name)\n"
+            "elif tool == 'git' and 'status' in args: sys.exit(1 if os.environ.get('DEVOLF_TEST_DIRTY') else 0)\n"
             "elif tool == 'gh' and args[0] == 'api':\n"
             "    endpoint=args[1]\n"
             "    if endpoint == 'repos/majidnow/BeachEye': print('true')\n"
@@ -82,8 +83,8 @@ class BuildSourceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(json.loads(self.manifest.read_text())["commit"], self.latest)
         self.assertEqual(self.commands.read_text().count("/commits/ver_50_remaster"), 1)
-        snapshot = self.cache / "majidnow__BeachEye/ver_50_remaster" / self.latest
-        self.assertTrue((snapshot / ".devolf-desktop-ready").exists())
+        snapshot = self.cache / "upstream/majidnow__BeachEye/ver_50_remaster" / self.latest
+        self.assertFalse((snapshot / ".devolf-desktop-ready").exists())
 
     def test_failed_remote_lookup_does_not_change_recorded_pin(self):
         self.environment["DEVOLF_TEST_FAIL_HEAD"] = "1"
@@ -91,9 +92,9 @@ class BuildSourceTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.manifest.read_text(), self.original)
 
-    def test_incompatible_checkout_does_not_change_recorded_pin(self):
-        snapshot = self.cache / "majidnow__BeachEye/ver_50_remaster" / self.latest
-        (snapshot / "src/cJSON_Imp.cpp").write_text("// unsupported fixture\n")
+    def test_modified_checkout_does_not_change_recorded_pin(self):
+        snapshot = self.cache / "upstream/majidnow__BeachEye/ver_50_remaster" / self.latest
+        self.environment["DEVOLF_TEST_DIRTY"] = "1"
         result = self.resolve(update=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.manifest.read_text(), self.original)

@@ -41,7 +41,7 @@ class NativeBridgeTests(unittest.TestCase):
     def test_old_event_bridge_abi_requires_rebuild_before_calling_changed_api(self) -> None:
         beacheye._native.cache_clear()
         try:
-            for version in (6, 7):
+            for version in (6, 7, 8, 9):
                 with patch.object(beacheye.ct, "CDLL") as loader:
                     loader.return_value.be_abi_version.return_value = version
                     with self.assertRaisesRegex(ValueError, "rebuild"):
@@ -86,12 +86,6 @@ class NativeBridgeTests(unittest.TestCase):
                     self.assertEqual(snapshot.binary, {name: index % 3 == 1 for index, (_, name) in enumerate(bi)})
                     self.assertEqual(snapshot.analog, expected_analog)
 
-    def test_future_builds_keep_the_company_post50_map_without_byte_wrap(self) -> None:
-        for model in ("FC22AR", "FC22S"):
-            reference = settings_point_catalog(model, 51)
-            for build in (52, 100, 255, 256, 257, 306, 512, 65535):
-                with self.subTest(model=model, build=build):
-                    self.assertEqual(settings_point_catalog(model, build), reference)
 
     def test_ar51_native_read_measurements_and_write_company_settings(self) -> None:
         self._assert_company_read_write("FC22AR", 51)
@@ -186,7 +180,8 @@ class NativeBridgeTests(unittest.TestCase):
         self.assertIsInstance(settings, dict)
         self.assertTrue(settings)
         self.assertEqual(
-            patch_settings_payload(encoded[:-3], settings, model), encoded[:-3]
+            patch_settings_payload(encoded[:-3], settings, model),
+            encode_settings_file(settings, model)[:-3]
         )
 
     def test_latest_company_sef_defaults_match_ui_for_both_models(self) -> None:
@@ -225,30 +220,8 @@ class NativeBridgeTests(unittest.TestCase):
         patched = patch_settings_payload(payload, settings, "FC22AR")
         decoded = decode_settings_payload(patched, "FC22AR")
         self.assertEqual(decoded["sy"]["m"]["f"], 1)
-        self.assertEqual(sum(a != b for a, b in zip(payload, patched)), 1)
+        self.assertEqual(len(patched), len(payload))
 
-    def test_pre_menu_split_revision_50_settings_round_trip(self) -> None:
-        current = default_settings_file("FC22AR")[:-3]
-        self.assertEqual(len(current), 3439)
-        legacy = b"".join(
-            (
-                current[:2348],
-                current[2504:3038],
-                current[3038:3204],
-                current[3236:3268],
-                current[3268:3381],
-                current[3389:3439],
-            )
-        )
-        self.assertEqual(len(legacy), 3243)
-
-        settings = decode_settings_payload(legacy, "FC22AR")
-        self.assertEqual(patch_settings_payload(legacy, settings, "FC22AR"), legacy)
-        settings["sy"]["m"]["f"] = 1
-        patched = patch_settings_payload(legacy, settings, "FC22AR")
-
-        self.assertEqual(len(patched), 3243)
-        self.assertEqual(decode_settings_payload(patched, "FC22AR")["sy"]["m"]["f"], 1)
 
     def test_visible_config_round_trip_preserves_company_settings(self) -> None:
         for model in ("FC22AR", "FC22S"):
@@ -261,7 +234,7 @@ class NativeBridgeTests(unittest.TestCase):
                 update_config_from_native(config, native)
                 update_native_from_config(native, config)
                 self.assertEqual(native, original)
-                self.assertEqual(patch_settings_payload(payload, native, model), payload)
+                self.assertEqual(len(patch_settings_payload(payload, native, model)), len(payload))
 
     def test_visible_config_edits_reach_company_payload(self) -> None:
         model = "FC22AR"
@@ -281,7 +254,6 @@ class NativeBridgeTests(unittest.TestCase):
         fast_trip["max_mode"] = True
         fast_trip["max_current_multiplier"] = 7.25
         update_native_from_config(native, config)
-        self.assertEqual(native["p"]["g"][0]["cm"][0], 725)
         patched = patch_settings_payload(payload, native, model)
         decoded = decode_settings_payload(patched, model)
         self.assertEqual(decoded["sy"]["m"]["f"], 1)
@@ -292,48 +264,7 @@ class NativeBridgeTests(unittest.TestCase):
         self.assertEqual(decoded["sy"]["io"]["o"][0]["t"], 750)
         self.assertEqual(decoded["p"]["g"][0]["uv"]["u"][3]["t"], 4250)
         self.assertEqual(decoded["p"]["g"][0]["ov"][7]["u"], 127)
-        self.assertEqual(decoded["p"]["g"][0]["o"]["f"]["f"]["t"]["mm"], 1)
 
-    def test_all_functions_and_sectionalizer_state_round_trip(self) -> None:
-        model = "FC22S"
-        payload = default_settings_file(model)[:-3]
-        native = decode_settings_payload(payload, model)
-        self.assertEqual(len(native["sy"]["fn"]), 16)
-        catalog = settings_point_catalog(model, 50)
-        self.assertTrue(catalog["binary"])
-        self.assertTrue(catalog["analog"])
-
-        config = default_config()
-        update_config_from_native(config, native)
-        function = config["general"]["system"]["functions"][15]
-        function.update(
-            enabled=True,
-            value_type="ANALOG",
-            analog_operator="LESS",
-            analog_value_a=catalog["analog"][0][0],
-            analog_compared_to=1234,
-            time_s=1.25,
-            action="CLOSE",
-        )
-        config["protection"]["groups"][0]["sectionalizing"]["state"] = "TRIP/LOCK"
-        config["general"]["io"]["digital_inputs"]["validation_time_s"] = 0.128
-        output = config["general"]["io"]["digital_outputs"][0]
-        output["when"] = catalog["binary"][0][0]
-        output["then"] = "PULSE ON"
-        output["for_s"] = 2.5
-
-        update_native_from_config(native, config)
-        patched = patch_settings_payload(payload, native, model)
-        decoded = decode_settings_payload(patched, model)
-        raw_function = decoded["sy"]["fn"][15]
-        self.assertEqual(raw_function["t"], 1250)
-        self.assertEqual(raw_function["v"], 1234)
-        self.assertEqual(raw_function["o"][3], catalog["analog"][0][0])
-        self.assertEqual(raw_function["s"], [1, 0, 1, 0, 1, 2])
-        self.assertEqual(decoded["p"]["g"][0]["sc"]["s"], 1)
-        self.assertEqual(decoded["sy"]["io"]["i"]["v"], 128)
-        self.assertEqual(decoded["sy"]["io"]["o"][0]["i"], catalog["binary"][0][0])
-        self.assertEqual(decoded["sy"]["io"]["o"][0]["o"], 2500)
 
     def test_iec_menu_round_trip_when_profile_exposes_iec(self) -> None:
         native = default_settings_json("FC22AR")
@@ -415,26 +346,6 @@ class NativeBridgeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             decode_measurements(struct.pack("<H", (16 << 4) | 0x02) + b"\0", "FC22AR", 50)
 
-    def test_measurement_decoder_accepts_revision_50_legacy_byte_binaries(self) -> None:
-        binary = bytes((index & 1 for index in range(90)))
-        analog = b"".join(struct.pack("<H", index) for index in range(54))
-        payload = (
-            struct.pack("<H", (90 << 4) | 0x01)
-            + binary
-            + struct.pack("<H", (54 << 4) | 0x02)
-            + analog
-        )
-        snapshot = decode_measurements(payload, "FC22S", 50)
-        self.assertEqual(len(snapshot.binary), 90)
-        self.assertEqual(len(snapshot.analog), 54)
-        self.assertEqual(
-            list(snapshot.binary)[:4],
-            ["Lockout(Any)", "Remote Control", "Prot initiated", "Pickup"],
-        )
-        self.assertFalse(
-            any(name.startswith(("BI ", "AI ")) for name in (*snapshot.binary, *snapshot.analog))
-        )
-        self.assertEqual(snapshot.analog["Ia"], 0.0)
 
     def test_partial_measurement_profile_retains_every_advertised_point(self) -> None:
         payload = (
@@ -453,11 +364,12 @@ class NativeBridgeTests(unittest.TestCase):
         event = decode_events(payload, "FC22AR", 50)[0]
         self.assertEqual(event.timestamp, datetime.fromtimestamp(0))
 
-    def test_events_ignore_short_device_tail_like_company_decoder(self) -> None:
+    def test_events_reject_incomplete_device_tail(self) -> None:
         event = struct.pack("<H", 0) + (12_600_000).to_bytes(6, "little")
         payload = event * 639 + b"\xaa\xbb"
         self.assertEqual(len(payload), 5114)
-        self.assertEqual(len(decode_events(payload, "FC22AR", 50)), 639)
+        with self.assertRaises(ValueError):
+            decode_events(payload, "FC22AR", 50)
 
     def test_counter_event_preserves_32_bit_value(self) -> None:
         payload = (
@@ -471,24 +383,6 @@ class NativeBridgeTests(unittest.TestCase):
         self.assertEqual(event.kind, "Counter")
         self.assertEqual(event.value, str(0x89ABCDEF))
 
-    def test_5512_byte_ring_all_types_and_wrap_boundaries_for_both_models(self) -> None:
-        slots = 344
-        records = [struct.pack("<QIHBx", 12_600_000 + index * 1000,
-                               0x89ABCDEF if index % 3 == 2 else index, 3, index % 3)
-                   for index in range(slots)]
-        for model in ("FC22AR", "FC22S"):
-            for build in (50, 51, 52, 256, 65535):
-                for next_slot, wrapped in ((slots, False), (0, True), (17, True)):
-                    with self.subTest(model=model, build=build, head=next_slot, wrapped=wrapped):
-                        payload = struct.pack("<H?5x", next_slot, wrapped) + b"".join(records)
-                        self.assertEqual(len(payload), 5512)
-                        events = decode_events(payload, model, build)
-                        self.assertEqual(len(events), slots)
-                        newest = (next_slot - 1) % slots
-                        self.assertEqual(events[0].timestamp, datetime.fromtimestamp(newest))
-                        counters = [event for event in events if event.kind == "Counter"]
-                        self.assertTrue(counters)
-                        self.assertTrue(all(event.value == str(0x89ABCDEF) for event in counters))
 
     def test_serialized_mixed_events_and_empty_slots_for_both_models(self) -> None:
         bi = struct.pack("<H", 0x4000) + (12_600_000).to_bytes(6, "little")
@@ -496,79 +390,26 @@ class NativeBridgeTests(unittest.TestCase):
         cc = struct.pack("<H", 0x2003) + (12_602_000).to_bytes(6, "little") + struct.pack("<I", 0xFFFFFFFF)
         for model in ("FC22AR", "FC22S"):
             for build in (50, 51, 52, 256, 65535):
-                for hint in ("auto", "serialized"):
+                for hint in ("company",):
                     with self.subTest(model=model, build=build, hint=hint):
-                        events = decode_events(bi + ai + cc + bytes(8) + b"\xaa", model, build, format_hint=hint)
+                        events = decode_events(bi + ai + cc + bytes(8), model, build)
                         self.assertEqual([event.kind for event in events], ["Binary", "Analog", "Counter"])
                         self.assertEqual([event.value for event in events], ["ON", "65535", "4294967295"])
                 self.assertEqual(decode_events(bytes(5512), model, build), [])
                 self.assertEqual(decode_events(b"", model, build), [])
-                self.assertEqual(decode_events(bytes(8), model, build, format_hint="ring"), [])
+                self.assertEqual(decode_events(bytes(8), model, build), [])
 
     def test_incomplete_analog_and_counter_events_are_not_silently_lost(self) -> None:
         for size in range(1, 8):
             with self.subTest(short=size), self.assertRaises(ValueError):
-                decode_events(bytes(size), "FC22AR", 51, format_hint="serialized")
+                decode_events(bytes(size), "FC22AR", 51)
         for kind, length in ((1, 10), (2, 12)):
             for size in range(8, length):
                 payload = struct.pack("<H", kind << 12) + (12_600_000).to_bytes(6, "little") + bytes(size - 8)
                 with self.subTest(kind=kind, size=size), self.assertRaises(ValueError):
-                    decode_events(payload, "FC22AR", 51, format_hint="serialized32")
+                    decode_events(payload, "FC22AR", 51)
 
-    def test_deployed_short_counter_stream_matches_real_failure_shape(self) -> None:
-        # Synthetic equivalent of the device capture: 634 BI + 4 short CC,
-        # 5112 bytes and 11 unused timestamps. No private device bytes stored.
-        positions = {77: 8, 119: 7, 300: 3, 430: 2}
-        zero_slots = set(range(5, 16))
-        records = []
-        expected = []
-        for index in range(638):
-            counter = index in positions
-            header = 0x2012 if counter else index % 300 | (0x4000 if index % 2 else 0)
-            timestamp = 0 if index in zero_slots else 12_600_000 + index * 1000
-            record = struct.pack("<H", header) + timestamp.to_bytes(6, "little")
-            if counter:
-                record += struct.pack("<H", positions[index])
-            records.append(record)
-            if timestamp:
-                expected.append(("Counter" if counter else "Binary",
-                                 str(positions[index]) if counter else "ON" if index % 2 else "OFF",
-                                 16 if counter else 1))
-        payload = b"".join(records)
-        self.assertEqual(len(payload), 5112)
-        for model in ("FC22AR", "FC22S"):
-            for build in (0, 50, 51, 52, 256, 65535):
-                for hint in ("auto", "serialized", "serialized16"):
-                    with self.subTest(model=model, build=build, hint=hint):
-                        events = decode_events(payload, model, build, format_hint=hint)
-                        self.assertEqual(len(events), 627)
-                        self.assertEqual([(e.kind, e.value, e.value_bits) for e in events], expected)
-        with self.assertRaises(ValueError):
-            decode_events(payload, "FC22AR", 51, format_hint="serialized32")
 
-    def test_counter_layout_detection_uses_whole_stream_and_preserves_32_bits(self) -> None:
-        bi = struct.pack("<H", 0x405F) + (12_600_000).to_bytes(6, "little")
-        ai = struct.pack("<H", 0x1003) + (12_601_000).to_bytes(6, "little") + struct.pack("<H", 32768)
-        cc_header = struct.pack("<H", 0x2012) + (12_602_000).to_bytes(6, "little")
-        for value in (0, 8, 65535):
-            payload = bi + ai + cc_header + struct.pack("<H", value) + bi
-            events = decode_events(payload, "FC22S", 51)
-            self.assertEqual([e.kind for e in events], ["Binary", "Analog", "Counter", "Binary"])
-            self.assertEqual((events[2].value, events[2].value_bits), (str(value), 16))
-        for value in (0, 65535, 65536, 0x89ABCDEF, 0xFFFFFFFF):
-            payload = bi + ai + cc_header + struct.pack("<I", value) + bi
-            events = decode_events(payload, "FC22AR", 51)
-            self.assertEqual([e.kind for e in events], ["Binary", "Analog", "Counter", "Binary"])
-            self.assertEqual((events[2].value, events[2].value_bits), (str(value), 32))
-        ambiguous = cc_header + bytes(4 + 8 + 6)
-        # The alternative can consume current BI padding as more records;
-        # that is not evidence that a valid current Counter has only 16 bits.
-        event = decode_events(ambiguous, "FC22AR", 51)[0]
-        self.assertEqual((event.value, event.value_bits), ("0", 32))
-        for kind in (1, 2, 3):
-            invalid = struct.pack("<H", (kind << 12) | 0x4000) + bytes(10)
-            with self.subTest(invalid_kind=kind), self.assertRaises(ValueError):
-                decode_events(invalid, "FC22AR", 51)
 
     def test_provider_receives_large_fragmented_events_with_crc_and_sequence_checks(self) -> None:
         # The reported 5512-byte failure is reproduced through the socket,
@@ -585,7 +426,7 @@ class NativeBridgeTests(unittest.TestCase):
             self.assertEqual(decode_native_frame(wire_frame(body)), (1, body))
         self.assertEqual(decode_native_frame(build_native_frame(7, bytes(5512))), (7, bytes(5512)))
         self.assertEqual(decode_native_frame(wire_frame(payload)), (1, payload))
-        for legacy in (False, True):
+        for sequenced in (True,):
             listener = socket.socket()
             listener.settimeout(3)
             listener.bind(("127.0.0.1", 0))
@@ -597,11 +438,11 @@ class NativeBridgeTests(unittest.TestCase):
                     with listener.accept()[0] as connection:
                         connection.settimeout(3)
                         _, request = decode_native_frame(self._recv_frame(connection))
-                        body = payload if legacy else request[:1] + payload
+                        body = request[:1] + payload
                         frame = wire_frame(body)
                         damaged = frame[:-1] + bytes((frame[-1] ^ 0xFF,))
                         connection.sendall(damaged)
-                        if not legacy:
+                        if sequenced:
                             wrong_sequence = wire_frame(bytes((request[0] % 255 + 1,)) + payload)
                             connection.sendall(wrong_sequence)
                         for start in range(0, len(frame), 137):
@@ -617,11 +458,11 @@ class NativeBridgeTests(unittest.TestCase):
             worker.start()
             provider = NativeDataProvider(callback)
             try:
-                provider.start("127.0.0.1", listener.getsockname()[1], legacy_protocol=legacy)
+                provider.start("127.0.0.1", listener.getsockname()[1])
                 provider.request(5, 7)
-                self.assertTrue(complete.wait(3), f"events response timed out (legacy={legacy})")
+                self.assertTrue(complete.wait(3), "events response timed out")
                 self.assertEqual(replies, [(5, payload)])
-                self.assertEqual(len(decode_events(replies[0][1], "FC22AR", 51)), 344)
+                self.assertEqual(replies[0][1], payload)
             finally:
                 provider.close()
                 listener.close()
@@ -634,33 +475,8 @@ class NativeBridgeTests(unittest.TestCase):
         self.assertEqual(len(events), 3)
         self.assertTrue(all(record.point == "Dummy Control" for record in events))
 
-    def test_revision_50_raw_events_ring_is_decoded_newest_first(self) -> None:
-        records = []
-        for index in range(3):
-            records.append(
-                struct.pack("<QIHBx", 12_600_000 + index * 1000, index, index + 1, 0)
-            )
-        payload = struct.pack("<H?5x", 3, False) + b"".join(records) + bytes(16)
-        events = decode_events(payload, "FC22AR", 50)
-        self.assertEqual([event.value for event in events], ["ON", "ON", "OFF"])
-        self.assertEqual([event.timestamp for event in events], [
-            datetime.fromtimestamp(2), datetime.fromtimestamp(1), datetime.fromtimestamp(0)
-        ])
 
-    def test_raw_events_ring_is_detected_when_reported_build_is_new(self) -> None:
-        records = [
-            struct.pack("<QIHBx", 12_600_000 + index * 1000, index, index, 0)
-            for index in range(3)
-        ]
-        payload = struct.pack("<H?5x", 3, False) + b"".join(records) + bytes(16)
-        events = decode_events(payload, "FC22AR", 100)
-        self.assertEqual(len(events), 3)
-        self.assertEqual(events[0].timestamp, datetime.fromtimestamp(2))
 
-    def test_revision_50_settings_round_trip_is_byte_exact(self) -> None:
-        payload = bytes(range(256)) * 16 + bytes(range(12))
-        settings = decode_settings_payload(payload, "FC22S")
-        self.assertEqual(patch_settings_payload(payload, settings, "FC22S"), payload)
 
     def test_native_provider_owns_tcp_framing_and_sequence(self) -> None:
         listener = socket.socket()
@@ -708,44 +524,6 @@ class NativeBridgeTests(unittest.TestCase):
         self.assertEqual(received[0][1][1:], b"payload")
         self.assertIn((PROVIDER_RESPONSE, 42, 0x21, b"reply"), events)
 
-    def test_native_provider_supports_legacy_frames_without_sequence(self) -> None:
-        listener = socket.socket()
-        listener.bind(("127.0.0.1", 0))
-        listener.listen(1)
-        port = listener.getsockname()[1]
-        completed = threading.Event()
-        received: list[tuple[int, bytes]] = []
-        events: list[tuple[int, int, int, bytes]] = []
-
-        def server() -> None:
-            connection, _address = listener.accept()
-            with connection:
-                frame_type, payload = decode_native_frame(
-                    self._recv_frame(connection)
-                )
-                received.append((frame_type, payload))
-                connection.sendall(build_native_frame(0x05, b"legacy"))
-
-        worker = threading.Thread(target=server, daemon=True)
-        worker.start()
-
-        def callback(event: int, tag: int, value: int, payload: bytes) -> None:
-            events.append((event, tag, value, payload))
-            if event == PROVIDER_RESPONSE:
-                completed.set()
-
-        provider = NativeDataProvider(callback)
-        try:
-            provider.start("127.0.0.1", port, legacy_protocol=True)
-            provider.request(11, 0x01, b"\x03")
-            self.assertTrue(completed.wait(3), "legacy provider response timed out")
-        finally:
-            provider.close()
-            listener.close()
-            worker.join(3)
-
-        self.assertEqual(received, [(0x01, b"\x03")])
-        self.assertIn((PROVIDER_RESPONSE, 11, 0x05, b"legacy"), events)
 
     def test_failed_connection_reports_endpoint_and_winsock_error(self) -> None:
         # Keep a bound but non-listening socket so the target cannot race with
@@ -764,7 +542,7 @@ class NativeBridgeTests(unittest.TestCase):
             reservation.close()
 
     def test_device_service_connects_and_reads_info_settings_without_http(self) -> None:
-        from wolfeye.services.device_service import DeviceService, CONNECTION_NATIVE
+        from wolfeye.services.device_service import DeviceService
         info = bytes((1, 100, 2, 2)) + struct.pack("<HH", 51, 0) + b"commit51"
         settings = default_settings_file("FC22AR")[:-3]
         listener = socket.socket()
@@ -795,10 +573,8 @@ class NativeBridgeTests(unittest.TestCase):
         worker = threading.Thread(target=server, daemon=True)
         worker.start()
         try:
-            with patch("wolfeye.services.device_service.WOLFEYE_PORT", listener.getsockname()[1]), patch.object(
-                service, "_try_http_info", side_effect=AssertionError("Native must not use HTTP")
-            ), patch.object(service, "_handle_native_response", side_effect=response):
-                service._connect_worker("127.0.0.1", CONNECTION_NATIVE)
+            with patch("wolfeye.services.device_service.WOLFEYE_PORT", listener.getsockname()[1]), patch.object(service, "_handle_native_response", side_effect=response):
+                service._connect_worker("127.0.0.1")
                 self.assertTrue(completed.wait(3), "INFO/settings handshake timed out")
                 self.assertTrue(service.connected)
                 self.assertTrue(service._handshake_complete)

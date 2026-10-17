@@ -290,10 +290,12 @@ class MeasurementPage(QWidget):
             table.setItem(row, 2, QTableWidgetItem(value))
 
     @staticmethod
-    def _fill(table: QTableWidget, values: dict[str, Any], bools: bool = False) -> None:
+    def _fill(table: QTableWidget, values: dict[str, Any], bools: bool = False,
+              indices: dict[str, int] | None = None) -> None:
         table.setRowCount(len(values))
-        for row, (name, value) in enumerate(values.items()):
-            table.setItem(row, 0, QTableWidgetItem(str(row)))
+        items = sorted(values.items(), key=lambda item: indices[item[0]]) if indices else values.items()
+        for row, (name, value) in enumerate(items):
+            table.setItem(row, 0, QTableWidgetItem(str(indices[name] if indices else row)))
             table.setItem(row, 1, QTableWidgetItem(name))
             text = (
                 "True"
@@ -310,8 +312,8 @@ class MeasurementPage(QWidget):
             table.setItem(row, 2, item)
 
     def update_snapshot(self, data: MeasurementSnapshot) -> None:
-        self._fill(self.analog_table, data.analog)
-        self._fill(self.binary_table, data.binary, True)
+        self._fill(self.analog_table, data.analog, indices=data.analog_indices)
+        self._fill(self.binary_table, data.binary, True, data.binary_indices)
         self.updated.setText(data.timestamp.strftime("Updated %H:%M:%S"))
 
 
@@ -670,6 +672,7 @@ class _SignalCapture:
 
 class SignalPage(QWidget):
     signal_requested = Signal()
+    adc_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -707,6 +710,10 @@ class SignalPage(QWidget):
         self.get_button.setEnabled(False)
         self.get_button.clicked.connect(self.signal_requested)
         tools.addWidget(self.get_button)
+        self.adc_button = QPushButton("Get ADC")
+        self.adc_button.setEnabled(False)
+        self.adc_button.clicked.connect(self.adc_requested)
+        tools.addWidget(self.adc_button)
         root.addLayout(tools)
 
         pages = QHBoxLayout()
@@ -732,6 +739,15 @@ class SignalPage(QWidget):
 
     def set_available(self, available: bool) -> None:
         self.get_button.setEnabled(available)
+        self.adc_button.setEnabled(available)
+
+    def set_adc(self, channels: list[list[float]]) -> None:
+        if not hasattr(self, "adc_viewer"):
+            self.adc_viewer = SignalViewerWindow(self)
+            self.adc_viewer.setWindowTitle(f"{PRODUCT_NAME} - Raw ADC")
+        self.adc_viewer.set_cycle("Raw ADC counts · company signal loader", channels, None, 0, None)
+        self.adc_viewer.show()
+        self.adc_viewer.raise_()
 
     def set_samples(
         self,

@@ -27,7 +27,7 @@ from wolfeye.qt import (
 )
 
 from wolfeye.config_schema import AR_MODES, BAUD_RATES, BINARY_POINT_NAMES, TCC_TYPES
-from wolfeye.services.beacheye import settings_point_catalog
+from wolfeye.services.beacheye import settings_point_catalog, cycle_ar_stage
 from wolfeye.numeric_schema import numeric_spec
 from wolfeye.widgets.numeric_editor import configure_numeric_editor, numeric_value, set_numeric_value
 from wolfeye.widgets.tcc_chart import TccChartDialog
@@ -124,7 +124,7 @@ class _BoundPage(QWidget):
             return widget.currentText()
         if isinstance(widget, (QDoubleSpinBox, QSpinBox)):
             return numeric_value(widget)
-        if isinstance(widget, QLineEdit):
+        if isinstance(widget, (QLineEdit, QPushButton)):
             return widget.text()
         raise TypeError(f"Unsupported bound widget: {type(widget).__name__}")
 
@@ -147,7 +147,7 @@ class _BoundPage(QWidget):
                 set_numeric_value(widget, float(value))
             elif isinstance(widget, QSpinBox):
                 set_numeric_value(widget, int(value))
-            elif isinstance(widget, QLineEdit):
+            elif isinstance(widget, (QLineEdit, QPushButton)):
                 widget.setText(str(value))
         finally:
             widget.blockSignals(blocked)
@@ -777,6 +777,7 @@ class GeneralPage(_BoundPage):
 
     def _functions_tab(self) -> None:
         container = QTabWidget()
+        self.function_tabs = container
         for index in range(16):
             content = QWidget()
             form = QFormLayout(content)
@@ -1116,8 +1117,11 @@ class ProtectionPage(_BoundPage):
                 "max_current_multiplier",
             )
             for stage in range(4):
-                mode = QComboBox()
-                mode.addItems(AR_MODES)
+                mode = QPushButton(AR_MODES[0])
+                mode.clicked.connect(
+                    lambda _checked=False, r=row, s=stage, p=path, sef=is_sef:
+                    self._cycle_ar_stage(p, r, s, sef)
+                )
                 widgets.append(mode)
                 paths += (f"ar_modes.{stage}",)
             for column, (widget, subpath) in enumerate(zip(widgets, paths), 1):
@@ -1192,6 +1196,19 @@ class ProtectionPage(_BoundPage):
         layout = QVBoxLayout(box)
         layout.addWidget(table)
         return box
+
+    def _cycle_ar_stage(self, path: str, row: int, stage: int, sef: bool) -> None:
+        first = row if sef else (row // 3) * 3
+        rows = 1 if sef else 3
+        buttons = [self._bindings[f"{path}.elements.{r}.ar_modes.{s}"][0]
+                   for r in range(first, first + rows) for s in range(4)]
+        values, blocked = cycle_ar_stage(
+            [AR_MODES.index(button.text()) for button in buttons],
+            [not button.isEnabled() for button in buttons], row - first, stage, sef,
+        )
+        for button, value, disabled in zip(buttons, values, blocked):
+            button.setText(AR_MODES[value])
+            button.setEnabled(not disabled)
 
     @staticmethod
     def _table_float(minimum: float, maximum: float) -> QDoubleSpinBox:
@@ -1796,6 +1813,15 @@ class ProtectionPage(_BoundPage):
             view_settings,
             self,
         )
+        native = getattr(self, "native_settings", None)
+        if native is not None and not title.startswith("SEF"):
+            group_index = int(group_path.split(".")[2])
+            family_key = {"oc": "o", "ef": "e", "nps": "nps"}.get(path.rsplit(".", 1)[1])
+            pack = native["p"]["g"][group_index].get(family_key, {})
+            available = all("mm" in pack.get(side, {}).get("f", {}).get("t", {}) for side in ("f", "r"))
+            dialog.max_mode.setEnabled(available)
+            if not available:
+                dialog.max_mode.setToolTip("Not exposed by the company BeachEye JSON API.")
         self._chart_dialogs.add(dialog)
         dialog.finished.connect(
             lambda _result: self._finish_tcc_dialog(dialog)

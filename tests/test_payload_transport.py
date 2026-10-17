@@ -43,9 +43,9 @@ class PayloadTransportTests(unittest.TestCase):
             self.assertLess(beacheye._native().be_frame_build(4, source, length, output, 16), 0)
 
     def test_provider_sends_large_requests_and_reserves_only_native_sequence(self):
-        for legacy in (False, True):
-            with self.subTest(legacy=legacy):
-                maximum = 65535 if legacy else 65534
+        for sequenced in (True,):
+            with self.subTest(sequenced=sequenced):
+                maximum = 65534
                 bodies = [bytes(index % 251 for index in range(size))
                           for size in (5112, 5120, 5121, 5512, 8192, maximum)]
                 listener = socket.socket()
@@ -61,8 +61,8 @@ class PayloadTransportTests(unittest.TestCase):
                             for body in bodies:
                                 frame_type, request = receive_frame(connection)
                                 self.assertEqual(frame_type, 4)
-                                self.assertEqual(request if legacy else request[1:], body)
-                                response = b"\x00" if legacy else request[:1] + b"\x00"
+                                self.assertEqual(request[1:], body)
+                                response = request[:1] + b"\x00"
                                 connection.sendall(build_native_frame(1, response))
                             finish.wait(5)
                     except BaseException as exc:
@@ -76,7 +76,7 @@ class PayloadTransportTests(unittest.TestCase):
                 worker.start()
                 provider = NativeDataProvider(callback)
                 try:
-                    provider.start("127.0.0.1", listener.getsockname()[1], legacy_protocol=legacy)
+                    provider.start("127.0.0.1", listener.getsockname()[1])
                     with self.assertRaisesRegex(OSError, "two-byte length"):
                         provider.request(99, 4, bytes(maximum + 1))
                     for tag, body in enumerate(bodies, 10):
@@ -116,7 +116,7 @@ class PayloadTransportTests(unittest.TestCase):
         measurements = struct.pack("<H", (4095 << 4) | 2) + struct.pack("<4095H", *range(4095))
         event = struct.pack("<H", 0x4000) + (12_600_000).to_bytes(6, "little")
         events = event * 8191
-        for legacy in (False, True):
+        for sequenced in (True,):
             listener = socket.socket()
             listener.settimeout(5)
             listener.bind(("127.0.0.1", 0))
@@ -129,7 +129,7 @@ class PayloadTransportTests(unittest.TestCase):
                         connection.settimeout(5)
                         for body in (measurements, events):
                             _, request = receive_frame(connection)
-                            data = body if legacy else request[:1] + body
+                            data = request[:1] + body
                             frame = build_native_frame(1, data)
                             for start in range(0, len(frame), 137):
                                 connection.sendall(frame[start:start + 137])
@@ -145,7 +145,7 @@ class PayloadTransportTests(unittest.TestCase):
             worker.start()
             provider = NativeDataProvider(callback)
             try:
-                provider.start("127.0.0.1", listener.getsockname()[1], legacy_protocol=legacy)
+                provider.start("127.0.0.1", listener.getsockname()[1])
                 for tag, frame_type, body in ((2, 2, measurements), (5, 7, events)):
                     complete.clear()
                     provider.request(tag, frame_type)

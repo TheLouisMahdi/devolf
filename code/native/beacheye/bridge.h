@@ -36,14 +36,18 @@ typedef struct {
 } BENamedEvent;
 
 BE_API uint32_t __cdecl be_abi_version(void);
+BE_API int __cdecl be_ar_cycle(uint8_t*, uint8_t*, uint32_t, uint32_t, uint32_t);
+BE_API int __cdecl be_tcc_trip_ms(
+    uint32_t, uint16_t, float, uint32_t, uint32_t, uint32_t,
+    uint32_t, uint16_t, uint32_t*
+);
 BE_API int __cdecl be_info(const uint8_t*, size_t, BEInfo*);
 BE_API int __cdecl be_measurements(const uint8_t*, size_t, BEPoint*, size_t);
 BE_API int __cdecl be_measurements_named(const uint8_t*, size_t, uint32_t, uint32_t, BENamedPoint*, size_t);
 BE_API int __cdecl be_events(const uint8_t*, size_t, BEEvent*, size_t);
-/* Event format: 0 = auto, 1 = serialized auto, 2 = ring, 3 = CC32, 4 = CC16.
- * Event reserved field reports transmitted value bits (1/16/32). */
-BE_API int __cdecl be_events_named(const uint8_t*, size_t, uint32_t, uint32_t, uint32_t, BENamedEvent*, size_t);
+BE_API int __cdecl be_events_named(const uint8_t*, size_t, uint32_t, uint32_t, BENamedEvent*, size_t);
 BE_API int __cdecl be_signal(const uint8_t*, size_t, float*, size_t);
+BE_API int __cdecl be_adc(const uint8_t*, size_t, float*, size_t);
 BE_API int __cdecl be_frame_build(uint8_t, const uint8_t*, size_t, uint8_t*, size_t);
 BE_API int __cdecl be_frame_decode(const uint8_t*, size_t, uint8_t*, uint8_t*, size_t);
 BE_API int __cdecl be_point_catalog_json(uint32_t, uint32_t, char*, size_t);
@@ -56,10 +60,9 @@ BE_API int __cdecl be_settings_file_from_payload(const uint8_t*, size_t, uint32_
 BE_API int __cdecl be_settings_patch_payload_json(
     const uint8_t*, size_t, const char*, size_t, uint32_t, uint8_t*, size_t
 );
-BE_API size_t __cdecl be_settings_legacy_size(void);
-BE_API int __cdecl be_settings_legacy_payload_json(const uint8_t*, size_t, char*, size_t);
-BE_API int __cdecl be_settings_legacy_patch_payload_json(
-    const uint8_t*, size_t, const char*, size_t, uint8_t*, size_t
+BE_API int __cdecl be_editor_payload_json(const uint8_t*, size_t, uint32_t, char*, size_t);
+BE_API int __cdecl be_editor_patch_payload_json(
+    const uint8_t*, size_t, const char*, size_t, uint32_t, uint8_t*, size_t
 );
 
 #ifdef __cplusplus

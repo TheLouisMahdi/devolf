@@ -37,12 +37,12 @@ from wolfeye.config_schema import default_config
 from wolfeye.models import DeviceInfo, MeasurementSnapshot
 from wolfeye.services.beacheye import (
     SIGNAL_SAMPLE_RATE_HZ,
-    decode_settings_file,
-    decode_settings_payload,
+    decode_editor_file as decode_settings_file,
+    decode_editor_payload as decode_settings_payload,
     default_settings_file,
-    default_settings_json,
-    encode_settings_file,
-    patch_settings_payload,
+    default_editor_json as default_settings_json,
+    encode_editor_file as encode_settings_file,
+    patch_editor_payload as patch_settings_payload,
     settings_file_from_payload,
 )
 from wolfeye.services.native_config import (
@@ -137,7 +137,7 @@ class MainWindow(QMainWindow):
         self.settings = QSettings()
         self.config = default_config()
         self.service = DeviceService()
-        self._raw_legacy_settings: bytes | None = None
+        self._raw_settings: bytes | None = None
         self._native_settings: dict[str, object] | None = None
         self._settings_model = ""
         self._device_busy = False
@@ -149,10 +149,11 @@ class MainWindow(QMainWindow):
         self._wire_events()
         self.general_page.apply_config(self.config)
         self.protection_page.apply_config(self.config)
+        self._apply_native_capabilities()
         self._restore_settings()
         self._load_native_defaults()
         self.log(
-            f"{PRODUCT_NAME} is ready. Select NATIVE for the current protocol or LEGACY for older TCP/HTTP devices.",
+            f"{PRODUCT_NAME} is ready. Connect using the company BeachEye protocol.",
             "info",
         )
         self.log("EmWolf uses the verified EWS2 TCP protocol on port 666.", "info")
@@ -439,6 +440,7 @@ class MainWindow(QMainWindow):
         self.measurement_page.refresh_requested.connect(self.service.refresh)
         self.events_page.load_requested.connect(self.service.request_events)
         self.signal_page.signal_requested.connect(self.request_signal)
+        self.signal_page.adc_requested.connect(self.service.request_adc)
         self.read_btn.clicked.connect(self.read_settings)
         self.write_btn.clicked.connect(self.write_settings)
         self.defaults_btn.clicked.connect(self.load_defaults)
@@ -450,6 +452,7 @@ class MainWindow(QMainWindow):
         self.service.measurements_changed.connect(self.on_measurements)
         self.service.events_changed.connect(self.events_page.set_events)
         self.service.signal_received.connect(self.on_signal)
+        self.service.adc_received.connect(self.on_adc)
         self.service.settings_received.connect(self.on_raw_settings)
         self.service.message.connect(self.log)
         self.service.busy_changed.connect(self.on_busy)
@@ -470,7 +473,7 @@ class MainWindow(QMainWindow):
             update_native_from_config(native, self.config)
             data = encode_settings_file(native, model)
             self._native_settings = native
-            self._raw_legacy_settings = data[:-3]
+            self._raw_settings = data[:-3]
             self.native_settings_page.set_settings(native)
         self._settings_model = model
 
@@ -515,7 +518,7 @@ class MainWindow(QMainWindow):
             self.device_summary.setText("No device connected")
         for button in (self.read_btn, self.write_btn, self.status_btn, self.reset_btn):
             button.setEnabled(info.connected)
-        tcp_available = info.connected and info.transport != "LEGACY HTTP"
+        tcp_available = info.connected
         self.measurement_page.set_connected(info.connected)
         self.signal_page.set_available(tcp_available)
         self.events_page.set_available(tcp_available)
@@ -548,7 +551,6 @@ class MainWindow(QMainWindow):
             button.setEnabled(self.service.connected and not busy)
         tcp_available = (
             self.service.connected
-            and self.service.info.transport != "LEGACY HTTP"
             and not busy
         )
         self.measurement_page.set_connected(self.service.connected and not busy)
@@ -581,13 +583,13 @@ class MainWindow(QMainWindow):
             update_native_from_config(self._native_settings, self.config)
             self.native_settings_page.set_settings(self._native_settings)
             model = self._settings_model or self._selected_model()
-            self._raw_legacy_settings = patch_settings_payload(
-                self._raw_legacy_settings, self._native_settings, model
+            self._raw_settings = patch_settings_payload(
+                self._raw_settings, self._native_settings, model
             )
         except (TypeError, ValueError) as exc:
             self.log(f"Company settings contain an invalid value: {exc}", "error")
             return
-        self.service.write_settings(self._raw_legacy_settings)
+        self.service.write_settings(self._raw_settings)
 
     def request_signal(self) -> None:
         self._collect_config()
@@ -608,11 +610,16 @@ class MainWindow(QMainWindow):
             config=self.config,
         )
 
+    def on_adc(self, channels: list[list[float]]) -> None:
+        # Raw ADC counts have no calibrated physical units. Keep the user's
+        # analysis code unchanged and do not label counts as amperes/volts.
+        self.signal_page.set_adc(channels)
+
     def on_raw_settings(self, payload: bytes) -> None:
         model = self.service.info.model or self._selected_model()
         try:
             self._native_settings = decode_settings_payload(payload, model)
-            self._raw_legacy_settings = payload
+            self._raw_settings = payload
             self._settings_model = model
             self.native_settings_page.set_settings(self._native_settings)
             update_config_from_native(self.config, self._native_settings)
@@ -620,19 +627,32 @@ class MainWindow(QMainWindow):
             self.general_page.apply_config(self.config)
             self.protection_page.set_device_model(model)
             self.protection_page.apply_config(self.config)
+            self._apply_native_capabilities()
             self.status_page.set_device_model(model)
-            if len(payload) == 4108:
-                self.log(
-                    "Received revision 50 settings; raw bytes are preserved for exact backup and write-back.",
-                    "success",
-                )
-            else:
-                self.log(
-                    f"Received and decoded {len(payload):,} setting bytes with the company Settings ABI.",
-                    "success",
-                )
+            self.log(
+                f"Received and decoded {len(payload):,} setting bytes with the company Settings ABI.",
+                "success",
+            )
         except ValueError as exc:
             self.log(f"Settings were rejected: {exc}", "error")
+
+    def _apply_native_capabilities(self) -> None:
+        if self._native_settings is None:
+            return
+        message = "Not available in the current Configure snapshot."
+        functions = self._native_settings["sy"].get("fn", [])
+        for index in range(self.general_page.function_tabs.count()):
+            available = index < len(functions)
+            self.general_page.function_tabs.setTabEnabled(index, available)
+            self.general_page.function_tabs.setTabToolTip(index, "" if available else message)
+        self.protection_page.native_settings = self._native_settings
+        for index, group in enumerate(self._native_settings["p"]["g"]):
+            for widget in self.protection_page._bindings.get(
+                f"protection.groups.{index}.sectionalizing.state", ()
+            ):
+                available = "s" in group["sc"]
+                widget.setEnabled(available)
+                widget.setToolTip("" if available else message)
 
     def _collect_config(self) -> None:
         self.general_page.update_config(self.config)
@@ -650,13 +670,14 @@ class MainWindow(QMainWindow):
         try:
             data = Path(path).read_bytes()
             self._native_settings, self._settings_model = decode_settings_file(data)
-            self._raw_legacy_settings = data[:-3]
+            self._raw_settings = data[:-3]
             self.native_settings_page.set_settings(self._native_settings)
             update_config_from_native(self.config, self._native_settings)
             self.general_page.set_device_model(self._settings_model)
             self.general_page.apply_config(self.config)
             self.protection_page.set_device_model(self._settings_model)
             self.protection_page.apply_config(self.config)
+            self._apply_native_capabilities()
             self.status_page.set_device_model(self._settings_model)
             blocked = self.device_type.blockSignals(True)
             self.device_type.setCurrentText(
@@ -690,15 +711,15 @@ class MainWindow(QMainWindow):
                 else default_settings_json(model)
             )
             update_native_from_config(native, self.config)
-            if self._raw_legacy_settings is not None:
-                self._raw_legacy_settings = patch_settings_payload(
-                    self._raw_legacy_settings, native, model
+            if self._raw_settings is not None:
+                self._raw_settings = patch_settings_payload(
+                    self._raw_settings, native, model
                 )
-                data = settings_file_from_payload(self._raw_legacy_settings, model)
+                data = settings_file_from_payload(self._raw_settings, model)
             else:
                 data = encode_settings_file(native, model)
             self._native_settings = native
-            self._raw_legacy_settings = data[:-3]
+            self._raw_settings = data[:-3]
             Path(path).write_bytes(data)
             self.settings.setValue("last_config", path)
             self.log(
@@ -714,6 +735,7 @@ class MainWindow(QMainWindow):
         self.general_page.apply_config(self.config)
         self.protection_page.set_device_model(self._selected_model())
         self.protection_page.apply_config(self.config)
+        self._apply_native_capabilities()
         self.status_page.set_device_model(self._selected_model())
         self._load_native_defaults()
         self.log("Default configuration restored.", "info")
@@ -732,11 +754,12 @@ class MainWindow(QMainWindow):
         self.status_page.set_device_model(self._settings_model)
         data = default_settings_file(self._settings_model)
         self._native_settings, _model = decode_settings_file(data)
-        self._raw_legacy_settings = data[:-3]
+        self._raw_settings = data[:-3]
         self.native_settings_page.set_settings(self._native_settings)
         update_config_from_native(self.config, self._native_settings)
         self.general_page.apply_config(self.config)
         self.protection_page.apply_config(self.config)
+        self._apply_native_capabilities()
 
     def on_update_progress(self, percent: int, kind: str) -> None:
         self.statusBar().showMessage(f"{kind} upload: {percent}%")

@@ -19,7 +19,7 @@ from wolfeye.qt import (
 
 
 class NativeSettingsPage(QWidget):
-    """Lossless editor for the JSON exposed by the original C++ Settings ABI."""
+    """Editor for typed fields in the original C++ Configure object."""
 
     changed = Signal()
     PATH_ROLE = Qt.ItemDataRole.UserRole
@@ -32,9 +32,8 @@ class NativeSettingsPage(QWidget):
 
         root = QVBoxLayout(self)
         note = QLabel(
-            "Exact company Settings ABI. Values are decoded and encoded by the original "
-            "C++ Configure/Settings implementation; device writes preserve all untouched "
-            "wire bytes exactly."
+            "Company Configure fields. Device settings are decoded and encoded by the "
+            "original C++ Settings implementation."
         )
         note.setWordWrap(True)
         note.setObjectName("muted")

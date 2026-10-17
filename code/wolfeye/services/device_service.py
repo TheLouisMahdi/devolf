@@ -3,22 +3,13 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
-import struct
 import threading
-import urllib.error
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 from wolfeye.qt import QObject, Signal
 
-from wolfeye.models import (
-    ANALOG_NAMES,
-    BINARY_NAMES,
-    COUNTER_NAMES,
-    DeviceInfo,
-    MeasurementSnapshot,
-)
+from wolfeye.models import DeviceInfo
 from wolfeye.services.beacheye import (
     PROVIDER_BOOTLOADER,
     PROVIDER_DISCONNECTED,
@@ -33,14 +24,12 @@ from wolfeye.services.beacheye import (
     decode_info,
     decode_measurements,
     decode_signal,
+    decode_adc,
     normalize_device_model,
     normalize_device_revision,
 )
 
 WOLFEYE_PORT = 6536
-CONNECTION_NATIVE = "NATIVE"
-CONNECTION_LEGACY = "LEGACY"
-LEGACY_SETTINGS_SIZE = 3744
 FRAME_MEASUREMENTS = 0x02
 FRAME_GET_SETTINGS = 0x03
 FRAME_SAVE_SETTINGS = 0x04
@@ -48,30 +37,12 @@ FRAME_INFO = 0x05
 FRAME_RESET = 0x06
 FRAME_EVENTS = 0x07
 FRAME_SIGNAL = 0x08
-FRAME_FILE_FIRMWARE = 0x09
-FRAME_FILE_BOOTLOADER = 0x0A
-FRAME_CHECK_UPDATE_FIRMWARE = 0x0B
-FRAME_CHECK_UPDATE_BOOTLOADER = 0x0C
-FRAME_UPDATE_FIRMWARE_SIGNAL = 0x0D
-FRAME_UPDATE_BOOTLOADER_SIGNAL = 0x0E
+FRAME_ADC = 0x11
 MEASUREMENT_BI_AI = 0x03
-STATUS_RESETTING = 0x02
 STATUS_OK = 0x00
-STATUS_FILE_WRITE_SUCCESS = 0x05
 STATUS_NO_NEED_UPLOAD = 0x09
-LEGACY_FRAME_MEASUREMENTS = 0x01
-LEGACY_FRAME_GET_SETTINGS = 0x02
-LEGACY_FRAME_STATUS = 0x06
-LEGACY_FRAME_SETTINGS = 0x07
-LEGACY_FRAME_CHECK = 0x0E
-LEGACY_FRAME_GET_SIGNAL = 0x0F
-LEGACY_FRAME_RESET = 0x11
-LEGACY_FRAME_DOWNLOAD = 0x13
-LEGACY_STATUS_FILE_SIZE = 0x07
-LEGACY_CHECK_DOWNLOAD = 0x02
-LEGACY_FILE_EVENTS = 0x02
 EVENT_RETRIES = 2
-EVENT_COMMANDS = frozenset(("events", "events_check", "events_chunk"))
+EVENT_COMMANDS = frozenset(("events",))
 
 _COMMANDS = {
     "info": 1,
@@ -81,8 +52,7 @@ _COMMANDS = {
     "events": 5,
     "signal": 6,
     "reset": 7,
-    "events_check": 8,
-    "events_chunk": 9,
+    "adc": 8,
 }
 _COMMAND_NAMES = {value: name for name, value in _COMMANDS.items()}
 
@@ -94,6 +64,7 @@ class DeviceService(QObject):
     measurements_changed = Signal(object)
     events_changed = Signal(object)
     signal_received = Signal(object)
+    adc_received = Signal(object)
     settings_received = Signal(bytes)
     message = Signal(str, str)
     busy_changed = Signal(bool)
@@ -104,21 +75,13 @@ class DeviceService(QObject):
         self.info = DeviceInfo()
         self._stop = threading.Event()
         self._worker: threading.Thread | None = None
-        self._poller: threading.Thread | None = None
-        self._request_lock = threading.Lock()
         self._connection_lock = threading.Lock()
         self._busy_lock = threading.Lock()
         self._busy_count = 0
         self._provider = NativeDataProvider(self._on_provider_event)
-        self._connection_mode = CONNECTION_NATIVE
-        self._legacy_protocol = False
         self._connection_ip = ""
-        self._fallback_attempted = False
         self._handshake_complete = False
         self._startup_in_progress = False
-        self._event_data = bytearray()
-        self._event_size = 0
-        self._event_sequence = 0
         self._event_lock = threading.RLock()
         self._event_active = False
         self._event_phase = ""
@@ -141,13 +104,11 @@ class DeviceService(QObject):
         self._stop.clear()
         with self._connection_lock:
             self._connection_ip = address
-            self._connection_mode = CONNECTION_NATIVE
-            self._fallback_attempted = False
             self._handshake_complete = False
             self._startup_in_progress = False
         self._worker = threading.Thread(
             target=self._connect_worker,
-            args=(address, CONNECTION_NATIVE),
+            args=(address,),
             daemon=True,
         )
         self._worker.start()
@@ -168,19 +129,10 @@ class DeviceService(QObject):
             self.message.emit("Disconnected", "info")
 
     def refresh(self) -> None:
-        if self.info.transport == "LEGACY HTTP":
-            if not self._request_lock.locked():
-                threading.Thread(target=self._refresh_legacy_http, daemon=True).start()
-        else:
-            self._send_native_request(
-                "measurements", FRAME_MEASUREMENTS, bytes((MEASUREMENT_BI_AI,))
-            )
+        self._send_native_request("measurements", FRAME_MEASUREMENTS, bytes((MEASUREMENT_BI_AI,)))
 
     def read_settings(self) -> None:
-        if self.info.transport == "LEGACY HTTP":
-            threading.Thread(target=self._read_legacy_http_settings, daemon=True).start()
-        else:
-            self._send_native_request("settings", FRAME_GET_SETTINGS)
+        self._send_native_request("settings", FRAME_GET_SETTINGS)
 
     def write_settings(self, payload: bytes) -> None:
         if not payload:
@@ -192,19 +144,10 @@ class DeviceService(QObject):
         if not self.connected:
             self.message.emit("Connect to the WolfEye device first.", "warning")
             return
-        if self.info.transport == "LEGACY HTTP":
-            self.message.emit(
-                "LEGACY HTTP settings are read-only; use LEGACY TCP for device writes.",
-                "warning",
-            )
-            return
         self._pending_settings_write = bytes(payload)
         self._send_native_request("settings_write", FRAME_SAVE_SETTINGS, payload)
 
     def request_events(self) -> None:
-        if self.info.transport == "LEGACY HTTP":
-            self._legacy_http_unsupported("event download")
-            return
         if not self.connected:
             self.message.emit("Connect to the WolfEye device first.", "warning")
             return
@@ -213,31 +156,19 @@ class DeviceService(QObject):
                 self.message.emit("Events are already being downloaded.", "info")
                 return
             self._event_active = True
-            self._event_data.clear()
-            self._event_size = 0
-            self._event_sequence = 0
             self._event_retries = 0
-            self._event_phase = "events_check" if self._legacy_protocol else "events"
+            self._event_phase = "events"
             self._set_busy(True)
             self._request_event_phase()
 
     def _request_event_phase(self) -> None:
-        if self._event_phase == "events_check":
-            self._send_native_request(
-                "events_check",
-                LEGACY_FRAME_CHECK,
-                bytes((LEGACY_CHECK_DOWNLOAD, LEGACY_FILE_EVENTS)),
-            )
-        elif self._event_phase == "events_chunk":
-            self._request_next_event_chunk()
-        else:
-            self._send_native_request("events", FRAME_EVENTS)
+        self._send_native_request("events", FRAME_EVENTS)
 
     def request_signal(self) -> None:
-        if self.info.transport == "LEGACY HTTP":
-            self._legacy_http_unsupported("signal download")
-            return
         self._send_native_request("signal", FRAME_SIGNAL)
+
+    def request_adc(self) -> None:
+        self._send_native_request("adc", FRAME_ADC)
 
     def send_control(self, operation: str) -> None:
         self.message.emit(
@@ -246,17 +177,11 @@ class DeviceService(QObject):
         )
 
     def reset_device(self) -> None:
-        if self.info.transport == "LEGACY HTTP":
-            self._legacy_http_unsupported("reset")
-            return
         self._send_native_request("reset", FRAME_RESET)
 
     def update_file(self, kind: str, path: str) -> None:
         if not self.connected:
             self.message.emit("Connect to the WolfEye device first.", "warning")
-            return
-        if self.info.transport == "LEGACY HTTP":
-            self._legacy_http_unsupported(f"{kind} transfer")
             return
         update_kind = (
             PROVIDER_FIRMWARE
@@ -271,134 +196,34 @@ class DeviceService(QObject):
             # The native provider already reports the precise validation error.
             pass
 
-    def _connect_worker(self, ip: str, mode: str) -> None:
+    def _connect_worker(self, ip: str) -> None:
         self._set_busy(True)
         try:
-            self._connect_attempt(ip, mode)
+            self._connect_attempt(ip)
         except (OSError, ValueError, TypeError) as exc:
-            if mode == CONNECTION_NATIVE and self._claim_legacy_fallback():
-                self.message.emit(
-                    f"NATIVE connection failed: {exc}. Trying LEGACY once...",
-                    "warning",
-                )
-                try:
-                    self._provider.stop()
-                    self._connect_attempt(ip, CONNECTION_LEGACY)
-                except (OSError, ValueError, TypeError) as legacy_exc:
-                    self._set_connection_failed(
-                        ip, f"LEGACY fallback failed: {legacy_exc}"
-                    )
-            else:
-                self._set_connection_failed(ip, f"{mode} connection failed: {exc}")
+            self._set_connection_failed(ip, f"BeachEye connection failed: {exc}")
         finally:
             self._set_busy(False)
 
-    def _connect_attempt(self, ip: str, mode: str) -> None:
+    def _connect_attempt(self, ip: str) -> None:
         if self._stop.is_set():
             raise OSError("connection was cancelled")
         with self._connection_lock:
             self._connection_ip = ip
-            self._connection_mode = mode
             self._handshake_complete = False
-        self.message.emit(f"Connecting to {ip} using {mode}...", "info")
-
-        # The company Native handshake reads identity through TCP INFO.
-        # An unavailable/proxied HTTP endpoint must not delay or prevent it.
-        http_info = self._try_http_info(ip) if mode == CONNECTION_LEGACY else None
-        if self._stop.is_set():
-            raise OSError("connection was cancelled")
-        build = (
-            normalize_device_revision(
-                http_info.get("build", http_info.get("revision", 0))
-            )
-            if http_info
-            else 0
-        )
-        model = (
-            normalize_device_model(http_info.get("model", "WolfEye"))
-            if http_info
-            else "WolfEye"
-        )
-        firmware = normalize_device_revision(http_info.get("firmware", 0)) if http_info else 0
-        hardware = normalize_device_revision(http_info.get("hardware", 0)) if http_info else 0
-
-        if mode == CONNECTION_LEGACY and self._uses_legacy_http(http_info, build):
-            self._connect_legacy_http(ip, model, firmware, hardware, build)
-            return
-
-        self._legacy_protocol = mode == CONNECTION_LEGACY
-        with self._connection_lock:
             self._startup_in_progress = True
+        self.message.emit(f"Connecting to {ip} using BeachEye...", "info")
         try:
-            self._provider.start(
-                ip, WOLFEYE_PORT, legacy_protocol=self._legacy_protocol
-            )
+            self._provider.start(ip, WOLFEYE_PORT)
         finally:
             with self._connection_lock:
                 self._startup_in_progress = False
         if self._stop.is_set():
             self._provider.stop()
             raise OSError("connection was cancelled")
-        self.info = DeviceInfo(
-            ip=ip,
-            model=model,
-            firmware=firmware,
-            hardware=hardware,
-            build=build or (50 if self._legacy_protocol else 0),
-            connected=True,
-            transport=(
-                f"LEGACY TCP:{WOLFEYE_PORT}"
-                if self._legacy_protocol
-                else f"NATIVE TCP:{WOLFEYE_PORT}"
-            ),
-        )
+        self.info = DeviceInfo(ip=ip, connected=True, transport=f"BeachEye TCP:{WOLFEYE_PORT}")
         self.connection_changed.emit(self.info)
-        self.message.emit(
-            f"Connected to {ip}:{WOLFEYE_PORT} using {mode}", "success"
-        )
-        if self._legacy_protocol:
-            self._send_native_request("settings", LEGACY_FRAME_GET_SETTINGS)
-        else:
-            self._send_native_request("info", FRAME_INFO)
-
-    def _claim_legacy_fallback(self) -> bool:
-        with self._connection_lock:
-            if (
-                self._stop.is_set()
-                or self._connection_mode != CONNECTION_NATIVE
-                or self._fallback_attempted
-                or self._handshake_complete
-            ):
-                return False
-            self._fallback_attempted = True
-            return True
-
-    def _queue_legacy_fallback(self, reason: str) -> bool:
-        if not self._claim_legacy_fallback():
-            return False
-        with self._connection_lock:
-            ip = self._connection_ip
-        if not ip:
-            return False
-        self.message.emit(
-            f"NATIVE connection failed: {reason}. Trying LEGACY once...",
-            "warning",
-        )
-        self._worker = threading.Thread(
-            target=self._legacy_fallback_worker, args=(ip,), daemon=True
-        )
-        self._worker.start()
-        return True
-
-    def _legacy_fallback_worker(self, ip: str) -> None:
-        self._set_busy(True)
-        try:
-            self._provider.stop()
-            self._connect_attempt(ip, CONNECTION_LEGACY)
-        except (OSError, ValueError, TypeError) as exc:
-            self._set_connection_failed(ip, f"LEGACY fallback failed: {exc}")
-        finally:
-            self._set_busy(False)
+        self._send_native_request("info", FRAME_INFO)
 
     def _set_busy(self, busy: bool) -> None:
         with self._busy_lock:
@@ -409,29 +234,24 @@ class DeviceService(QObject):
             self.busy_changed.emit(is_busy)
 
     def _set_connection_failed(self, ip: str, text: str) -> None:
+        with self._connection_lock:
+            self._connection_ip = ""
+            self._handshake_complete = False
+        self._pending_settings_write = None
         self._reset_event_download()
         self.info = DeviceInfo(ip=ip, connected=False, transport="Offline")
         self.connection_changed.emit(self.info)
         self.message.emit(text, "error")
 
-    def _fail_legacy_handshake(self, reason: str, *, stop_provider: bool) -> bool:
+    def _fail_handshake(self, reason: str) -> bool:
         with self._connection_lock:
-            if (
-                self._connection_mode != CONNECTION_LEGACY
-                or self._handshake_complete
-                or not self._connection_ip
-            ):
+            if self._handshake_complete or not self._connection_ip:
                 return False
             ip = self._connection_ip
             self._connection_ip = ""
-        self._set_connection_failed(ip, f"LEGACY fallback failed: {reason}")
-        if stop_provider:
-            threading.Thread(target=self._provider.stop, daemon=True).start()
+        self._set_connection_failed(ip, f"BeachEye handshake failed: {reason}")
+        self._provider.stop()
         return True
-
-    def _initial_connection_pending(self) -> bool:
-        with self._connection_lock:
-            return not self._handshake_complete and bool(self._connection_ip)
 
     def _mark_handshake_complete(self) -> None:
         with self._connection_lock:
@@ -444,14 +264,6 @@ class DeviceService(QObject):
             self.message.emit("Connect to the WolfEye device first.", "warning")
             return
         try:
-            if self._legacy_protocol:
-                frame_type = {
-                    "measurements": LEGACY_FRAME_MEASUREMENTS,
-                    "settings": LEGACY_FRAME_GET_SETTINGS,
-                    "settings_write": LEGACY_FRAME_SETTINGS,
-                    "signal": LEGACY_FRAME_GET_SIGNAL,
-                    "reset": LEGACY_FRAME_RESET,
-                }.get(command, frame_type)
             self._provider.request(_COMMANDS[command], frame_type, command_payload)
         except (KeyError, OSError) as exc:
             if command == "settings_write":
@@ -460,39 +272,23 @@ class DeviceService(QObject):
                 self._reset_event_download()
             self.message.emit(f"Native {command} request failed: {exc}", "error")
 
-    def _on_provider_event(
-        self, event: int, tag: int, value: int, payload: bytes
-    ) -> None:
+    def _on_provider_event(self, event: int, tag: int, value: int, payload: bytes) -> None:
         if event == PROVIDER_RESPONSE:
             command = _COMMAND_NAMES.get(tag)
             if command:
                 self._handle_native_response(command, value, payload)
-            return
-        if event == PROVIDER_TIMEOUT:
+        elif event == PROVIDER_TIMEOUT:
             command = _COMMAND_NAMES.get(tag, f"command {tag}")
             if command in EVENT_COMMANDS:
                 self._retry_event_download(command, "request timed out")
                 return
             if command == "settings_write":
                 self._pending_settings_write = None
-            if (
-                self._connection_mode == CONNECTION_NATIVE
-                and command == "info"
-                and self._initial_connection_pending()
-                and self._queue_legacy_fallback("device info request timed out")
-            ):
+            if command == "info" and self._fail_handshake("device info request timed out"):
                 return
-            if (
-                command == "settings"
-                and self._fail_legacy_handshake(
-                    "settings request timed out", stop_provider=True
-                )
-            ):
-                return
-            self.message.emit(f"WolfEye {command} request timed out.", "error")
-            return
-        if event == PROVIDER_ERROR:
-            text = payload.decode("utf-8", errors="replace") or "Native provider error"
+            self.message.emit(f"BeachEye {command} request timed out.", "error")
+        elif event == PROVIDER_ERROR:
+            text = payload.decode("utf-8", errors="replace") or "BeachEye provider error"
             command = _COMMAND_NAMES.get(tag)
             if command in EVENT_COMMANDS:
                 self._retry_event_download(command, text)
@@ -501,41 +297,21 @@ class DeviceService(QObject):
                 self._pending_settings_write = None
             with self._connection_lock:
                 startup_in_progress = self._startup_in_progress
-            if startup_in_progress:
-                return
-            if (
-                self._connection_mode == CONNECTION_NATIVE
-                and self._initial_connection_pending()
-                and self._queue_legacy_fallback(text)
-            ):
-                return
-            if self._fail_legacy_handshake(text, stop_provider=True):
+            if startup_in_progress or self._fail_handshake(text):
                 return
             self.message.emit(text, "error")
-            return
-        if event == PROVIDER_DISCONNECTED:
+        elif event == PROVIDER_DISCONNECTED:
             self._reset_event_download()
             self._pending_settings_write = None
-            mode = self._connection_mode
-            if (
-                mode == CONNECTION_NATIVE
-                and self._initial_connection_pending()
-                and self._queue_legacy_fallback("connection closed during handshake")
-            ):
-                return
-            if self._fail_legacy_handshake(
-                "connection closed during handshake", stop_provider=False
-            ):
-                return
+            with self._connection_lock:
+                self._connection_ip = ""
             self.info.connected = False
             self.info.transport = "Offline"
             self.connection_changed.emit(self.info)
-            self.message.emit(f"{mode} connection closed.", "warning")
-            return
-        if event == PROVIDER_UPDATE_PROGRESS:
+            self.message.emit("BeachEye connection closed.", "warning")
+        elif event == PROVIDER_UPDATE_PROGRESS:
             self.update_progress.emit(value, self._update_kind(tag))
-            return
-        if event == PROVIDER_UPDATE_FINISHED:
+        elif event == PROVIDER_UPDATE_FINISHED:
             text = payload.decode("utf-8", errors="replace")
             self.message.emit(text, "success" if value else "error")
             if value:
@@ -572,8 +348,6 @@ class DeviceService(QObject):
                 self.measurements_changed.emit(snapshot)
                 self.message.emit("WolfEye measurements loaded.", "success")
             elif command == "settings":
-                if self._connection_mode == CONNECTION_LEGACY:
-                    self._mark_handshake_complete()
                 self.settings_received.emit(payload)
                 self.message.emit(
                     f"Read {len(payload):,} WolfEye setting bytes.", "success"
@@ -581,7 +355,7 @@ class DeviceService(QObject):
             elif command == "settings_write":
                 if not payload:
                     raise ValueError("device returned an empty settings status")
-                status = payload[1] if self._legacy_protocol and len(payload) > 1 else payload[0]
+                status = payload[0]
                 if status not in (STATUS_OK, STATUS_NO_NEED_UPLOAD):
                     self._pending_settings_write = None
                     raise ValueError(f"device rejected settings with status 0x{status:02X}")
@@ -595,17 +369,16 @@ class DeviceService(QObject):
             elif command == "signal":
                 self.signal_received.emit(decode_signal(payload))
                 self.message.emit("WolfEye signal loaded.", "success")
+            elif command == "adc":
+                self.adc_received.emit(decode_adc(payload))
+                self.message.emit("WolfEye raw ADC loaded.", "success")
             elif command == "reset":
                 self.message.emit(
                     "RESET accepted; reconnect after the device restarts.", "success"
                 )
                 self.disconnect_device()
-        except (ValueError, struct.error) as exc:
-            if (
-                command == "info"
-                and self._connection_mode == CONNECTION_NATIVE
-                and self._queue_legacy_fallback(f"invalid device info response: {exc}")
-            ):
+        except ValueError as exc:
+            if command == "info" and self._fail_handshake(f"invalid device info response: {exc}"):
                 return
             self.message.emit(f"WolfEye {command} decode failed: {exc}", "error")
 
@@ -613,20 +386,12 @@ class DeviceService(QObject):
     def _update_kind(kind: int) -> str:
         return "Firmware" if kind == PROVIDER_FIRMWARE else "Bootloader"
 
-    def _request_next_event_chunk(self) -> None:
-        self._send_native_request(
-            "events_chunk",
-            LEGACY_FRAME_DOWNLOAD,
-            struct.pack("<H", self._event_sequence),
-        )
-
     def _reset_event_download(self) -> None:
         with self._event_lock:
             active = self._event_active
             self._event_active = False
             self._event_phase = ""
-            self._event_data.clear()
-            self._event_size = self._event_sequence = self._event_retries = 0
+            self._event_retries = 0
             if active:
                 self._set_busy(False)
 
@@ -648,51 +413,18 @@ class DeviceService(QObject):
     def _handle_event_response(self, command: str, frame_type: int, payload: bytes) -> None:
         with self._event_lock:
             if not self._event_active or command != self._event_phase:
-                return  # A canceled/finished download must not populate the UI.
-            data = payload
+                return
             try:
-                if command == "events_check":
-                    if (frame_type != LEGACY_FRAME_STATUS or len(payload) < 6
-                            or payload[:2] != bytes((LEGACY_FRAME_CHECK, LEGACY_STATUS_FILE_SIZE))):
-                        raise ValueError("device did not return the legacy events file size")
-                    self._event_size = struct.unpack_from("<I", payload, 2)[0]
-                    if self._event_size:
-                        self._event_phase = "events_chunk"
-                        self._event_retries = 0
-                        self._request_next_event_chunk()
-                        return
-                    data = b""
-                elif command == "events_chunk":
-                    if frame_type != LEGACY_FRAME_DOWNLOAD or len(payload) <= 2:
-                        raise ValueError("device returned an empty or invalid events chunk")
-                    sequence = struct.unpack_from("<H", payload)[0]
-                    if sequence != self._event_sequence:
-                        raise ValueError(f"unexpected events chunk {sequence}; expected {self._event_sequence}")
-                    remaining = self._event_size - len(self._event_data)
-                    self._event_data.extend(payload[2:2 + remaining])
-                    self._event_sequence = (self._event_sequence + 1) & 0xFFFF
-                    self._event_retries = 0
-                    if len(self._event_data) < self._event_size:
-                        self._request_next_event_chunk()
-                        return
-                    data = bytes(self._event_data)
-                records = decode_events(data, self.info.model, self.info.build)
+                records = decode_events(payload, self.info.model, self.info.build)
                 self._reset_event_download()
                 self.events_changed.emit(records)
                 self.message.emit(
-                    f"Loaded {len(records)} WolfEye event(s)." if records
-                    else "No WolfEye events are available.", "success" if records else "info",
+                    f"Loaded {len(records)} BeachEye event(s)." if records
+                    else "No BeachEye events are available.", "success" if records else "info",
                 )
-            except (ValueError, struct.error) as exc:
-                diagnostic = self._save_event_diagnostic(command, frame_type, data, str(exc))
-                reason = f"{self.info.model} build {self.info.build}: {exc}{diagnostic}"
-                if command == "events_chunk" and len(self._event_data) == self._event_size:
-                    # Completed but invalid file: do not request past EOF.
-                    # Release the transaction so a fresh snapshot can be read.
-                    self._reset_event_download()
-                    self.message.emit(f"Event decode failed: {reason}", "error")
-                else:
-                    self._retry_event_download(command, reason)
+            except ValueError as exc:
+                diagnostic = self._save_event_diagnostic(command, frame_type, payload, str(exc))
+                self._retry_event_download(command, f"{self.info.model} build {self.info.build}: {exc}{diagnostic}")
 
     def _save_event_diagnostic(self, command: str, frame_type: int, data: bytes, error: str) -> str:
         try:
@@ -704,166 +436,10 @@ class DeviceService(QObject):
                 "captured_at": datetime.now(timezone.utc).isoformat(),
                 "model": self.info.model, "build": self.info.build,
                 "firmware": self.info.firmware, "hardware": self.info.hardware,
-                "bootloader": self.info.bootloader, "bridge_abi": 8,
+                "bootloader": self.info.bootloader, "bridge_abi": 10,
                 "transport": self.info.transport, "command": command,
                 "frame_type": frame_type, "size": len(data), "error": error,
-                "expected_chunk": self._event_sequence,
-                "received_file_bytes": len(self._event_data),
-                "expected_file_bytes": self._event_size,
             }, indent=2), encoding="utf-8")
             return f"; raw response saved to {capture}"
         except OSError as exc:
             return f"; diagnostic save failed: {exc}"
-
-    @staticmethod
-    def _uses_legacy_http(
-        http_info: dict[str, object] | None, build: int
-    ) -> bool:
-        if not http_info:
-            return False
-        model = str(http_info.get("model", ""))
-        return build <= 0 or (model[4:5].upper() == "S" and build < 40)
-
-    def _connect_legacy_http(
-        self,
-        ip: str,
-        model: str,
-        firmware: int,
-        hardware: int,
-        build: int,
-    ) -> None:
-        self._legacy_protocol = False
-        self._mark_handshake_complete()
-        self.info = DeviceInfo(
-            ip=ip,
-            model=model,
-            firmware=firmware,
-            hardware=hardware,
-            build=build,
-            connected=True,
-            transport="LEGACY HTTP",
-        )
-        self.connection_changed.emit(self.info)
-        self.message.emit(f"Connected to {ip} using LEGACY HTTP", "success")
-        self._start_legacy_http_poller()
-
-    def _start_legacy_http_poller(self) -> None:
-        if self._poller and self._poller.is_alive():
-            return
-
-        def loop() -> None:
-            while (
-                not self._stop.wait(1.0)
-                and self.connected
-                and self.info.transport == "LEGACY HTTP"
-            ):
-                self._refresh_legacy_http()
-
-        self._poller = threading.Thread(target=loop, daemon=True)
-        self._poller.start()
-
-    def _refresh_legacy_http(self) -> None:
-        if not self._request_lock.acquire(blocking=False):
-            return
-        try:
-            body = self._http_get(self.info.ip, "/measurements", timeout=3.0)
-            analog_raw = self._between(body, b'{"analogs":"', b'","binaries":"')
-            binary_raw = self._between(body, b'","binaries":"', b'","counters":"')
-            counter_raw = self._between(body, b'","counters":"', b'"}')
-            analog_size = len(ANALOG_NAMES) * 2
-            binary_size = len(BINARY_NAMES)
-            counter_size = len(COUNTER_NAMES) * 4
-            if (
-                len(analog_raw) < analog_size
-                or len(binary_raw) < binary_size
-                or len(counter_raw) < counter_size
-            ):
-                raise ValueError(
-                    "Measurement response is shorter than the supplied point definitions"
-                )
-            analog_values = struct.unpack(
-                f"<{len(ANALOG_NAMES)}H", analog_raw[:analog_size]
-            )
-            counter_values = struct.unpack(
-                f"<{len(COUNTER_NAMES)}I", counter_raw[:counter_size]
-            )
-            self.measurements_changed.emit(
-                MeasurementSnapshot(
-                    analog={
-                        name: float(value)
-                        for name, value in zip(ANALOG_NAMES, analog_values)
-                    },
-                    binary={
-                        name: bool(value)
-                        for name, value in zip(BINARY_NAMES, binary_raw[:binary_size])
-                    },
-                    counters={
-                        name: int(value)
-                        for name, value in zip(COUNTER_NAMES, counter_values)
-                    },
-                )
-            )
-        except (OSError, ValueError, struct.error) as exc:
-            self.message.emit(f"LEGACY HTTP measurement failed: {exc}", "error")
-        finally:
-            self._request_lock.release()
-
-    def _read_legacy_http_settings(self) -> None:
-        try:
-            body = self._http_get(self.info.ip, "/settings", timeout=5.0)
-            marker = b'{"data":"'
-            start = body.find(marker)
-            if start < 0:
-                raise ValueError("Missing legacy settings payload")
-            start += len(marker)
-            payload = body[start : start + LEGACY_SETTINGS_SIZE]
-            if len(payload) != LEGACY_SETTINGS_SIZE:
-                raise ValueError(
-                    f"Legacy settings payload is shorter than {LEGACY_SETTINGS_SIZE} bytes"
-                )
-            self.settings_received.emit(payload)
-            self.message.emit(
-                f"Read {len(payload):,} LEGACY HTTP setting bytes.", "success"
-            )
-        except (OSError, ValueError) as exc:
-            self.message.emit(f"LEGACY HTTP settings read failed: {exc}", "error")
-
-    def _legacy_http_unsupported(self, operation: str) -> None:
-        self.message.emit(
-            f"LEGACY HTTP does not define {operation}; select LEGACY TCP when the device supports port {WOLFEYE_PORT}.",
-            "warning",
-        )
-
-    @staticmethod
-    def _between(body: bytes, start_token: bytes, end_token: bytes) -> bytes:
-        start = body.find(start_token)
-        if start < 0:
-            raise ValueError(f"Missing response field: {start_token!r}")
-        start += len(start_token)
-        end = body.find(end_token, start)
-        if end < 0:
-            raise ValueError("Malformed device response")
-        return body[start:end]
-
-    @staticmethod
-    def _http_get(ip: str, path: str, timeout: float) -> bytes:
-        try:
-            request = urllib.request.Request(
-                f"http://{ip}{path}", headers={"Connection": "close"}
-            )
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                return response.read()
-        except urllib.error.URLError as exc:
-            raise OSError(getattr(exc, "reason", exc)) from exc
-
-    @staticmethod
-    def _try_http_info(ip: str) -> dict[str, object] | None:
-        try:
-            value = json.loads(
-                DeviceService._http_get(ip, "/info", timeout=3.0).decode(
-                    "utf-8", errors="strict"
-                )
-            )
-            return value if isinstance(value, dict) else None
-        except (OSError, ValueError, TypeError, urllib.error.URLError):
-            return None

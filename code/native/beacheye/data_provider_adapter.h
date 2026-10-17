@@ -36,7 +36,7 @@ enum BEProviderUpdateKind : uint32_t {
 BE_PROVIDER_API void* __cdecl be_provider_create(BEProviderCallback callback, void* context);
 BE_PROVIDER_API void __cdecl be_provider_destroy(void* provider);
 BE_PROVIDER_API int __cdecl be_provider_start(
-    void* provider, const char* ip, uint16_t port, uint32_t timeout_ms, uint32_t legacy_protocol
+    void* provider, const char* ip, uint16_t port, uint32_t timeout_ms
 );
 BE_PROVIDER_API void __cdecl be_provider_stop(void* provider);
 BE_PROVIDER_API int __cdecl be_provider_request(

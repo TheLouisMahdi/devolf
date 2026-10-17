@@ -69,7 +69,7 @@ public:
         if (worker_.joinable() && worker_.get_id() != std::this_thread::get_id()) worker_.join();
     }
 
-    int start(const char* ip, uint16_t port, uint32_t timeout_ms, bool legacy_protocol) {
+    int start(const char* ip, uint16_t port, uint32_t timeout_ms) {
         if (!ip || !*ip || !port) return fail("Invalid native provider endpoint.");
         stop();
         join_worker();
@@ -153,7 +153,6 @@ public:
             socket_ = connected;
             stop_requested_ = false;
             connected_ = true;
-            legacy_protocol_ = legacy_protocol;
             sequence_ = 1;
             receive_buffer_.clear();
             queue_.clear();
@@ -190,8 +189,7 @@ public:
         }
         std::unique_lock<std::mutex> lock(mutex_);
         if (!connected_) return -1;
-        const size_t sequence_size = legacy_protocol_ ? 0 : 1;
-        if (payload_size > BE_FRAME_MAX_PAYLOAD - sequence_size) {
+        if (payload_size > BE_FRAME_MAX_PAYLOAD - 1) {
             lock.unlock();
             return fail("Native request does not fit the protocol's two-byte length field.");
         }
@@ -205,12 +203,6 @@ public:
         if (!path || (kind != BE_PROVIDER_FIRMWARE && kind != BE_PROVIDER_BOOTLOADER)) {
             return fail("Invalid update request.");
         }
-        bool legacy = false;
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            legacy = legacy_protocol_;
-        }
-        if (legacy) return fail_update(kind, "This firmware uses the legacy update protocol.");
         if (bootloader < 2) return fail_update(kind, "Not supported by this device bootloader.");
 
         std::ifstream stream(std::filesystem::path(path), std::ios::binary);
@@ -331,8 +323,7 @@ private:
             if (pending_ || queue_.empty() || !connected_) return;
             request = std::move(queue_.front());
             queue_.pop_front();
-            sequence = sequence_++;
-            if (!sequence_) sequence_ = 1;
+            sequence = sequence_;
             pending_ = Pending{
                 request,
                 sequence,
@@ -342,8 +333,8 @@ private:
         }
 
         std::vector<uint8_t> payload;
-        payload.reserve(request.payload.size() + (legacy_protocol_ ? 0 : 1));
-        if (!legacy_protocol_) payload.push_back(sequence);
+        payload.reserve(request.payload.size() + 1);
+        payload.push_back(sequence);
         payload.insert(payload.end(), request.payload.begin(), request.payload.end());
         std::vector<uint8_t> frame(payload.size() + 7);
         const int frame_size = be_frame_build(
@@ -355,12 +346,6 @@ private:
                 pending_.reset();
             }
             emit_error(request.tag, "Native request send failed.");
-        } else if (legacy_protocol_ && request.frame_type == 17) {
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                pending_.reset();
-            }
-            emit(BE_PROVIDER_RESPONSE, request.tag, request.frame_type, nullptr, 0);
         }
     }
 
@@ -404,11 +389,20 @@ private:
                 receive_buffer_.data(), total, &frame_type, payload.data(), payload.size()
             );
             if (decoded < 0) {
-                receive_buffer_.erase(receive_buffer_.begin());
+                receive_buffer_.erase(receive_buffer_.begin(), receive_buffer_.begin() + total);
+                // Company OnFrame clears waiting on CRC_ERROR and resends the
+                // active command with the same sequence.
+                if (decoded == -2) {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    if (pending_) {
+                        queue_.push_front(std::move(pending_->request));
+                        pending_.reset();
+                    }
+                }
                 continue;
             }
             receive_buffer_.erase(receive_buffer_.begin(), receive_buffer_.begin() + total);
-            if (decoded < 0 || (!legacy_protocol_ && decoded < 1)) continue;
+            if (decoded < 1) continue;
             handle_response(frame_type, payload.data(), static_cast<size_t>(decoded));
         }
     }
@@ -417,12 +411,13 @@ private:
         Request request{};
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (!pending_ || (!legacy_protocol_ && pending_->sequence != payload[0])) return;
+            if (!pending_ || pending_->sequence != payload[0]) return;
             request = std::move(pending_->request);
             pending_.reset();
+            if (++sequence_ == 0) sequence_ = 1;
         }
-        const uint8_t* body = payload + (legacy_protocol_ ? 0 : 1);
-        const size_t body_size = size - (legacy_protocol_ ? 0 : 1);
+        const uint8_t* body = payload + 1;
+        const size_t body_size = size - 1;
         if (request.tag >= INTERNAL_UPDATE_CHECK_EXISTING) {
             handle_update_response(request.tag, body, body_size);
         } else {
@@ -602,7 +597,6 @@ private:
     SOCKET socket_ = INVALID_SOCKET;
     bool stop_requested_ = false;
     bool connected_ = false;
-    bool legacy_protocol_ = false;
     uint8_t sequence_ = 1;
     std::deque<Request> queue_;
     std::optional<Pending> pending_;
@@ -631,11 +625,11 @@ void __cdecl be_provider_destroy(void* provider) {
 }
 
 int __cdecl be_provider_start(
-    void* provider, const char* ip, uint16_t port, uint32_t timeout_ms, uint32_t legacy_protocol
+    void* provider, const char* ip, uint16_t port, uint32_t timeout_ms
 ) {
     try {
         return provider
-            ? static_cast<Provider*>(provider)->start(ip, port, timeout_ms, legacy_protocol != 0)
+            ? static_cast<Provider*>(provider)->start(ip, port, timeout_ms)
             : -1;
     } catch (...) {
         return -1;

@@ -44,7 +44,8 @@ $resolver = Join-Path $projectRoot "resolve-beacheye-source.ps1"
 
 function Invoke-NativeBuild(
     [string]$BuildDirectory,
-    [string]$BeachEyeDirectory
+    [string]$BeachEyeDirectory,
+    [string]$WolfEyeDirectory
 ) {
     $configureArguments = @(
         "-S", $source,
@@ -56,7 +57,8 @@ function Invoke-NativeBuild(
         "-DCMAKE_BUILD_TYPE=Release",
         "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$BuildDirectory",
         "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=$BuildDirectory",
-        "-DBEACHEYE_DIR=$BeachEyeDirectory"
+        "-DBEACHEYE_DIR=$BeachEyeDirectory",
+        "-DWOLFEYE_DIR=$WolfEyeDirectory"
     )
     & cmake @configureArguments
     if ($LASTEXITCODE -ne 0) {
@@ -73,6 +75,8 @@ if ($null -eq $sourceInfo -or -not (Test-Path -LiteralPath $sourceInfo.Path -Pat
     throw "BeachEye source resolution did not return a valid directory."
 }
 
+$wolfSourceInfo = & $resolver -Dependency WolfEye
+
 Write-Host "Building BeachEye branch '$($sourceInfo.Branch)' from $($sourceInfo.SourceKind)."
 Write-Host "BeachEye source: $($sourceInfo.Path)"
 Write-Host "BeachEye commit: $($sourceInfo.Commit)"
@@ -80,13 +84,21 @@ Write-Host "BeachEye commit: $($sourceInfo.Commit)"
 $previousPath = $env:PATH
 $env:PATH = "$toolchainBin;$previousPath"
 try {
-    Invoke-NativeBuild $build $sourceInfo.Path
+    Invoke-NativeBuild $build $sourceInfo.Path $wolfSourceInfo.Path
+    $sourceStatus = & git -C $sourceInfo.Path status --porcelain --untracked-files=all
+    if ($LASTEXITCODE -ne 0 -or -not [string]::IsNullOrWhiteSpace(($sourceStatus -join ""))) {
+        throw "BeachEye checkout changed during compilation; refusing to install the DLL."
+    }
+    $wolfStatus = & git -C $wolfSourceInfo.Path status --porcelain --untracked-files=all
+    if ($LASTEXITCODE -ne 0 -or -not [string]::IsNullOrWhiteSpace(($wolfStatus -join ""))) {
+        throw "WolfEye company checkout changed during compilation."
+    }
     New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
     Copy-Item -LiteralPath $output -Destination $destination -Force
     Write-Host "Built native DataProvider: $destination"
 
-# All reported device builds use the selected company source. Its Database
-# DisablePoints(model, device_build) owns revision-specific measurement maps.
+    # All reported device builds use the selected company source. Its Database
+    # DisablePoints(model, device_build) owns revision-specific measurement maps.
 }
 finally {
     $env:PATH = $previousPath

@@ -92,15 +92,24 @@ def _native() -> ct.CDLL:
         library = ct.CDLL(str(path))
         library.be_abi_version.argtypes = []
         library.be_abi_version.restype = ct.c_uint32
-        if library.be_abi_version() != 8:
+        if library.be_abi_version() != 10:
             raise ValueError(
                 "Unsupported BeachEye bridge ABI; rebuild wolfeye_beacheye.dll"
             )
+        library.be_tcc_trip_ms.argtypes = [
+            ct.c_uint32, ct.c_uint16, ct.c_float, ct.c_uint32,
+            ct.c_uint32, ct.c_uint32, ct.c_uint32, ct.c_uint16,
+            ct.POINTER(ct.c_uint32),
+        ]
+        library.be_tcc_trip_ms.restype = ct.c_int
+        library.be_ar_cycle.argtypes = [ct.POINTER(ct.c_uint8), ct.POINTER(ct.c_uint8), ct.c_uint32, ct.c_uint32, ct.c_uint32]
+        library.be_ar_cycle.restype = ct.c_int
         for name, output in (
             ("info", _Info),
             ("measurements", _Point),
             ("events", _Event),
             ("signal", ct.c_float),
+            ("adc", ct.c_float),
         ):
             function = getattr(library, f"be_{name}")
             function.argtypes = [ct.c_void_p, ct.c_size_t, ct.POINTER(output)]
@@ -119,7 +128,6 @@ def _native() -> ct.CDLL:
         library.be_events_named.argtypes = [
             ct.c_void_p,
             ct.c_size_t,
-            ct.c_uint32,
             ct.c_uint32,
             ct.c_uint32,
             ct.POINTER(_NamedEvent),
@@ -196,6 +204,10 @@ def _native() -> ct.CDLL:
             ct.c_size_t,
         ]
         library.be_settings_patch_payload_json.restype = ct.c_int
+        library.be_editor_payload_json.argtypes = library.be_settings_payload_json.argtypes
+        library.be_editor_payload_json.restype = ct.c_int
+        library.be_editor_patch_payload_json.argtypes = library.be_settings_patch_payload_json.argtypes
+        library.be_editor_patch_payload_json.restype = ct.c_int
         library.be_provider_create.argtypes = [_ProviderCallback, ct.c_void_p]
         library.be_provider_create.restype = ct.c_void_p
         library.be_provider_destroy.argtypes = [ct.c_void_p]
@@ -204,7 +216,6 @@ def _native() -> ct.CDLL:
             ct.c_void_p,
             ct.c_char_p,
             ct.c_uint16,
-            ct.c_uint32,
             ct.c_uint32,
         ]
         library.be_provider_start.restype = ct.c_int
@@ -226,29 +237,36 @@ def _native() -> ct.CDLL:
             ct.c_uint32,
         ]
         library.be_provider_update_file.restype = ct.c_int
-        library.be_settings_legacy_size.argtypes = []
-        library.be_settings_legacy_size.restype = ct.c_size_t
-        library.be_settings_legacy_payload_json.argtypes = [
-            ct.c_void_p,
-            ct.c_size_t,
-            ct.c_void_p,
-            ct.c_size_t,
-        ]
-        library.be_settings_legacy_payload_json.restype = ct.c_int
-        library.be_settings_legacy_patch_payload_json.argtypes = [
-            ct.c_void_p,
-            ct.c_size_t,
-            ct.c_void_p,
-            ct.c_size_t,
-            ct.c_void_p,
-            ct.c_size_t,
-        ]
-        library.be_settings_legacy_patch_payload_json.restype = ct.c_int
     except (OSError, AttributeError) as exc:
         raise ValueError(
             f"Cannot load BeachEye C++ bridge: {path}. Build the DLL for this Python architecture. {exc}"
         ) from exc
     return library
+
+
+def cycle_ar_stage(modes: list[int], disabled: list[bool], row: int, stage: int, sef: bool) -> tuple[list[int], list[bool]]:
+    count = 4 if sef else 12
+    if len(modes) != count or len(disabled) != count:
+        raise ValueError("Invalid AR stage pack")
+    values = (ct.c_uint8 * count)(*modes)
+    blocked = (ct.c_uint8 * count)(*disabled)
+    if _native().be_ar_cycle(values, blocked, row, stage, sef) < 0:
+        raise ValueError("Invalid AR stage transition")
+    return list(values), [bool(value) for value in blocked]
+
+
+def calculate_tcc_trip_ms(
+    curve_type: int, pickup: int, multiplier: float, minimum: int,
+    maximum: int, adder: int, definite_time: int, current: int,
+) -> int | None:
+    if any(not 0 <= value <= 0xFFFFFFFF for value in (minimum, maximum, adder, definite_time)):
+        return None
+    result = ct.c_uint32()
+    status = _native().be_tcc_trip_ms(
+        curve_type, pickup, multiplier, minimum, maximum, adder,
+        definite_time, current, ct.byref(result),
+    )
+    return result.value if status == 0 else None
 
 
 class NativeDataProvider:
@@ -284,7 +302,6 @@ class NativeDataProvider:
         ip: str,
         port: int = 6536,
         timeout_ms: int = 5000,
-        legacy_protocol: bool = False,
     ) -> None:
         self._last_error = ""
         if _native().be_provider_start(
@@ -292,7 +309,6 @@ class NativeDataProvider:
             ip.encode("ascii"),
             port,
             timeout_ms,
-            int(legacy_protocol),
         ) < 0:
             raise OSError(self._last_error or "Native TCP connection failed")
 
@@ -378,16 +394,20 @@ def decode_measurements(
     analog: dict[str, float] = {}
     binary: dict[str, bool] = {}
     counters: dict[str, int] = {}
+    analog_indices: dict[str, int] = {}
+    binary_indices: dict[str, int] = {}
     for i in range(count):
         point = points[i]
         name = _native_name(point.name, point.type, point.source_index)
         if point.type == M_TYPE_BI:
-            _put_unique(binary, name, bool(point.value), point.source_index)
+            key = _put_unique(binary, name, bool(point.value), point.source_index)
+            binary_indices[key] = int(point.dnp_index)
         elif point.type == M_TYPE_AI:
-            _put_unique(analog, name, float(point.value), point.source_index)
+            key = _put_unique(analog, name, float(point.value), point.source_index)
+            analog_indices[key] = int(point.dnp_index)
         else:
             _put_unique(counters, name, int(point.value), point.source_index)
-    return MeasurementSnapshot(analog, binary, counters)
+    return MeasurementSnapshot(analog, binary, counters, analog_indices=analog_indices, binary_indices=binary_indices)
 
 
 def _decode_measurements_by_wire_schema(payload: bytes) -> MeasurementSnapshot:
@@ -420,12 +440,8 @@ def _decode_measurements_by_wire_schema(payload: bytes) -> MeasurementSnapshot:
 
 
 def decode_events(
-    payload: bytes, model: str = "", build: int = 0, *, format_hint: str = "auto"
+    payload: bytes, model: str = "", build: int = 0
 ) -> list[EventRecord]:
-    formats = {"auto": 0, "serialized": 1, "ring": 2,
-               "serialized32": 3, "serialized16": 4}
-    if format_hint not in formats:
-        raise ValueError(f"Unsupported event format: {format_hint}")
     events = (_NamedEvent * max(1, len(payload) // 8))()
     buffer = ct.create_string_buffer(payload)
     count = _native().be_events_named(
@@ -433,7 +449,6 @@ def decode_events(
         len(payload),
         _model_code(model),
         build,
-        formats[format_hint],
         events,
         len(events),
     )
@@ -443,8 +458,7 @@ def decode_events(
     invalid_timestamps = 0
     for i in range(count):
         event = events[i]
-        # Company EventToString omits unused/zero-time slots, including an
-        # entirely empty ring or zero-padded serialized buffer.
+        # Company EventToString omits zero-time events.
         if not event.time_ms:
             continue
         try:
@@ -454,9 +468,6 @@ def decode_events(
                 (event.time_ms - EVENT_TIMEZONE_OFFSET_MS) / 1000
             )
         except (OSError, OverflowError, ValueError):
-            # A raw device ring can contain one stale/corrupt slot.  The old
-            # viewer kept displaying the other valid events, so do the same
-            # instead of discarding the complete response.
             invalid_timestamps += 1
             continue
         binary = event.type == 0
@@ -482,6 +493,13 @@ def decode_signal(payload: bytes) -> list[list[float]]:
         list(values[i * SIGNAL_SAMPLES : (i + 1) * SIGNAL_SAMPLES])
         for i in range(SIGNAL_CHANNELS)
     ]
+
+
+def decode_adc(payload: bytes) -> list[list[float]]:
+    values = (ct.c_float * max(1, len(payload) // 2))()
+    count = _decode("adc", payload, values, len(values))
+    samples = count // SIGNAL_CHANNELS
+    return [list(values[i * samples:(i + 1) * samples]) for i in range(SIGNAL_CHANNELS)]
 
 
 def build_native_frame(frame_type: int, payload: bytes = b"") -> bytes:
@@ -543,20 +561,11 @@ def default_settings_file(model: str) -> bytes:
 
 def decode_settings_payload(payload: bytes, model: str) -> dict[str, object]:
     """Decode a raw device Settings payload through the original C++ code."""
-    if len(payload) == 4108:
-        # Build 50 exposes Configure_50 verbatim. Keep it byte-exact so reads,
-        # round-trip writes and backups remain safe even though its ABI predates
-        # the structured Configure JSON shipped by newer BeachEye versions.
-        return {"legacy_payload_hex": payload.hex()}
     source = ct.create_string_buffer(payload)
     output = ct.create_string_buffer(1_048_576)
     size = _native().be_settings_payload_json(
         source, len(payload), _model_code(model), output, len(output)
     )
-    if size < 0:
-        size = _native().be_settings_legacy_payload_json(
-            source, len(payload), output, len(output)
-        )
     return _settings_json_result(size, output, "decode device settings")
 
 
@@ -599,18 +608,7 @@ def settings_file_from_payload(payload: bytes, model: str) -> bytes:
 def patch_settings_payload(
     payload: bytes, settings: dict[str, object], model: str
 ) -> bytes:
-    """Apply editable JSON fields while preserving opaque company ABI bytes."""
-    if len(payload) == 4108:
-        value = settings.get("legacy_payload_hex")
-        if not isinstance(value, str):
-            raise ValueError("Revision 50 settings require legacy_payload_hex")
-        try:
-            patched = bytes.fromhex(value)
-        except ValueError as exc:
-            raise ValueError("Revision 50 settings contain invalid hexadecimal data") from exc
-        if len(patched) != len(payload):
-            raise ValueError("Revision 50 settings size changed")
-        return patched
+    """Apply JSON with the company importer and serializer."""
     encoded = json.dumps(settings, separators=(",", ":")).encode("utf-8")
     base = ct.create_string_buffer(payload)
     source = ct.create_string_buffer(encoded)
@@ -625,17 +623,50 @@ def patch_settings_payload(
         len(output),
     )
     if size < 0:
-        size = _native().be_settings_legacy_patch_payload_json(
-            base,
-            len(payload),
-            source,
-            len(encoded),
-            output,
-            len(output),
-        )
-    if size < 0:
         raise ValueError("The native WolfEye settings payload could not be patched")
     return bytes(output[:size])
+
+
+def decode_editor_payload(payload: bytes, model: str) -> dict[str, object]:
+    """Read actual Configure fields without the company JSON exporter's mutation."""
+    source = ct.create_string_buffer(payload)
+    output = ct.create_string_buffer(1_048_576)
+    size = _native().be_editor_payload_json(
+        source, len(payload), _model_code(model), output, len(output)
+    )
+    return _settings_json_result(size, output, "read Configure fields")
+
+
+def patch_editor_payload(payload: bytes, settings: dict[str, object], model: str) -> bytes:
+    """Assign typed Configure members, then use the original wire serializer."""
+    encoded = json.dumps(settings, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    base, source = ct.create_string_buffer(payload), ct.create_string_buffer(encoded)
+    output = (ct.c_ubyte * len(payload))()
+    size = _native().be_editor_patch_payload_json(
+        base, len(payload), source, len(encoded), _model_code(model), output, len(output)
+    )
+    if size < 0:
+        raise ValueError("Invalid Configure field type, range, or payload size")
+    return bytes(output[:size])
+
+
+def default_editor_json(model: str) -> dict[str, object]:
+    return decode_editor_payload(default_settings_file(model)[:-3], model)
+
+
+def encode_editor_file(settings: dict[str, object], model: str) -> bytes:
+    payload = patch_editor_payload(default_settings_file(model)[:-3], settings, model)
+    return settings_file_from_payload(payload, model)
+
+
+def decode_editor_file(data: bytes) -> tuple[dict[str, object], str]:
+    # Native setup validation checks the model flag, exact payload length and CRC.
+    if len(data) < 3:
+        raise ValueError("The WolfEye setup file is incomplete")
+    model = "FC22AR" if data[-3] == 1 else "FC22S"
+    if data[-3] not in (0, 1) or settings_file_from_payload(data[:-3], model) != data:
+        raise ValueError("Invalid WolfEye setup length, model flag or CRC")
+    return decode_editor_payload(data[:-3], model), model
 
 
 def _settings_json_result(
@@ -690,6 +721,7 @@ _Value = TypeVar("_Value")
 
 def _put_unique(
     values: dict[str, _Value], name: str, value: _Value, source_index: int
-) -> None:
+) -> str:
     key = name if name not in values else f"{name} [{source_index}]"
     values[key] = value
+    return key

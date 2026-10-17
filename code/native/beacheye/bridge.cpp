@@ -14,8 +14,8 @@
 #include "cJSON_Imp.h"
 #include "crc.h"
 #include "ls_config.h"
+#include "settings_editor.h"
 
-// edited to solve bridge problem poimu
 static_assert(sizeof(BEInfo) == 32 && sizeof(BEPoint) == 12 && sizeof(BEEvent) == 24);
 static_assert(sizeof(BENamedPoint) == 80 && sizeof(BENamedEvent) == 88);
 static_assert(sizeof(float) == 4 && std::numeric_limits<float>::is_iec559);
@@ -28,12 +28,6 @@ constexpr uint8_t START_DOG = 0x24;
 uint32_t little(const uint8_t* p, size_t count) {
     uint32_t value = 0;
     for (size_t i = 0; i < count; ++i) value |= uint32_t(p[i]) << (8 * i);
-    return value;
-}
-
-uint64_t little64(const uint8_t* p) {
-    uint64_t value = 0;
-    for (size_t i = 0; i < 8; ++i) value |= uint64_t(p[i]) << (8 * i);
     return value;
 }
 
@@ -57,7 +51,6 @@ struct Block {
     uint32_t type;
     uint32_t count;
     const uint8_t* values;
-    bool binary_packed;
 };
 
 int parse_blocks(const uint8_t* data, size_t size, std::vector<Block>& blocks) {
@@ -72,25 +65,7 @@ int parse_blocks(const uint8_t* data, size_t size, std::vector<Block>& blocks) {
         if (type != M_TYPE_BI && type != M_TYPE_AI && type != M_TYPE_BC) return -1;
         const size_t bytes = type == M_TYPE_BI ? (count + 7) / 8 : count * (type == M_TYPE_AI ? 2 : 4);
         if (bytes > size - offset) return -1;
-        blocks.push_back({type, count, data + offset, true});
-        offset += bytes;
-    }
-    return 0;
-}
-
-int parse_legacy_blocks(const uint8_t* data, size_t size, std::vector<Block>& blocks) {
-    if (!data) return -1;
-    size_t offset = 0;
-    while (offset < size) {
-        if (size - offset < 2) return -1;
-        const uint32_t header = little(data + offset, 2);
-        offset += 2;
-        const uint32_t type = header & 15;
-        const uint32_t count = header >> 4;
-        if (type != M_TYPE_BI && type != M_TYPE_AI && type != M_TYPE_BC) return -1;
-        const size_t bytes = count * (type == M_TYPE_BI ? 1 : type == M_TYPE_AI ? 2 : 4);
-        if (bytes > size - offset) return -1;
-        blocks.push_back({type, count, data + offset, false});
+        blocks.push_back({type, count, data + offset});
         offset += bytes;
     }
     return 0;
@@ -106,13 +81,7 @@ std::vector<typename T::value_type*> enabled_in_wire_order(T& points) {
 }
 
 uint8_t company_revision(uint32_t build) {
-    // DataProvider initializes the revision to 50 until INFO is received.  The
-    // Python service always reads INFO before measurements; keep the company
-    // default for direct/offline decoder calls as well.
-    // INFO carries a uint16 build, while the company API accepts uint8.
-    // Its current maps distinguish 50 from >50. Saturate instead of wrapping
-    // newer builds (e.g. 256) into the old map.
-    return static_cast<uint8_t>(std::min<uint32_t>(build ? build : 50, UINT8_MAX));
+    return static_cast<uint8_t>(build ? build : 50);
 }
 
 template <typename T>
@@ -128,13 +97,8 @@ int append_native_binaries(
     for (auto& point : points.list) point.Enable();
     disable_points(points, recloser, company_revision(build));
     auto sorted = enabled_in_wire_order(points.list);
-    // The separately recognized legacy byte-per-binary format used DNP order.
-    if (!block.binary_packed) {
-        std::sort(sorted.begin(), sorted.end(), [](const auto* a, const auto* b) {
-            return a->dnp3.index < b->dnp3.index;
-        });
-    }
     if (block.count != sorted.size() || block.count > capacity - used) return -1;
+    points.Deserialize(block.values);
     for (size_t wire = 0; wire < sorted.size(); ++wire) {
         auto* point = sorted[wire];
         auto& target = out[used++];
@@ -142,9 +106,7 @@ int append_native_binaries(
             M_TYPE_BI,
             point->id,
             point->dnp3.index,
-            block.binary_packed
-                ? (block.values[wire / 8] >> (wire % 8)) & 1u
-                : block.values[wire],
+            static_cast<uint32_t>(point->Value()),
             {},
         };
         copy_name(target, point->Name());
@@ -162,105 +124,38 @@ int append_native_analogs(
     disable_points(points, recloser, company_revision(build));
     auto sorted = enabled_in_wire_order(points.list);
     if (block.count != sorted.size() || block.count > capacity - used) return -1;
+    points.Deserialize(block.values);
     for (size_t wire = 0; wire < sorted.size(); ++wire) {
         auto* point = sorted[wire];
         auto& target = out[used++];
         target = {
             M_TYPE_AI, point->id, point->dnp3.index,
-            little(block.values + wire * 2, 2), {}
+            static_cast<uint32_t>(point->Value()), {}
         };
         copy_name(target, point->Name());
     }
     return 0;
 }
 
-bool looks_like_event_ring(const uint8_t* data, size_t size) {
-    if (!data || size < 8 || (size - 8) % 16 != 0) return false;
-    const size_t slots = (size - 8) / 16;
-    const size_t next = little(data, 2);
-    const uint8_t wrapped = data[2];
-    if (wrapped > 1 || (wrapped ? (!slots || next >= slots) : next > slots)) return false;
-    for (size_t i = 3; i < 8; ++i) if (data[i] != 0) return false;
-
-    const size_t count = wrapped ? slots : next;
-    for (size_t i = 0; i < count; ++i) {
-        const uint8_t* record = data + 8 + i * 16;
-        if (record[14] > 2) return false;
-    }
-    return true;
-}
-
-struct EventStreamLayout {
-    bool valid;
-    size_t consumed;
-};
-
-size_t event_wire_size(uint32_t type, bool short_counter) {
-    // Use the pinned company's schema, not packet length or INFO build.
-    // Older company Event::SerializeSize returned the AI size for CC too,
-    // overwriting CC's upper word with the next event during serialization.
-    const auto wire_type = short_counter && type == 2 ? 1 : type;
-    BeachWolf::Event schema(0, 0, static_cast<BeachWolf::EventLogType>(wire_type), 0);
-    return schema.SerializeSize();
-}
-
-EventStreamLayout inspect_event_stream(const uint8_t* data, size_t size, bool short_counter) {
-    const size_t base = event_wire_size(0, false);
-    if (size && size < base) return {false, 0};
-    size_t offset = 0;
-    while (size - offset >= base) {
-        const auto header = little(data + offset, 2);
-        const auto type = (header >> 12) & 3;
-        // Header() uses 12 position bits, 2 type bits and a BI-only value bit.
-        if (type > 2 || (header & 0x8000) || (type != 0 && (header & 0x4000))) {
-            return {false, offset};
-        }
-        const size_t length = event_wire_size(type, short_counter);
-        if (size - offset < length) return {false, offset};
-        offset += length;
-    }
-    return {true, offset};  // Preserve the company's short trailing-byte tolerance.
-}
-
 int decode_company_event_stream(
-    const uint8_t* data, size_t size, BEEvent* out, size_t capacity, uint32_t format
+    const uint8_t* data, size_t size, BEEvent* out, size_t capacity
 ) {
     if (!data || !out) return -1;
-    const auto modern = inspect_event_stream(data, size, false);
-    const auto deployed = inspect_event_stream(data, size, true);
-    bool short_counter = format == 4;
-    if (format == 3) {
-        if (!modern.valid) return -1;
-    } else if (format == 4) {
-        if (!deployed.valid) return -1;
-    } else {
-        if (!modern.valid && !deployed.valid) return -1;
-        // Prefer complete record boundaries over a partial trailing record.
-        // An alternative consuming only current zero padding as extra empty
-        // BI records is not evidence that a valid CC32 value was short.
-        const bool current_zero_padding = modern.valid && std::all_of(
-            data + modern.consumed, data + size, [](uint8_t byte) { return byte == 0; });
-        short_counter = deployed.valid && (!modern.valid ||
-            (deployed.consumed > modern.consumed && !current_zero_padding));
-    }
-    const size_t end = short_counter ? deployed.consumed : modern.consumed;
     size_t offset = 0, used = 0;
-    while (offset < end) {
-        if (used >= capacity || used >= INT32_MAX) return -1;
-        const auto type = (little(data + offset, 2) >> 12) & 3;
-        const size_t wire_size = event_wire_size(type, short_counter);
-        const size_t company_size = event_wire_size(type, false);
-        std::vector<uint8_t> record(company_size, 0);
-        std::memcpy(record.data(), data + offset, wire_size);
-        // Zero-extend only the bits actually sent by old firmware. Names,
-        // header, timestamp and value decoding still come from BeachEye.
+    while (offset < size) {
+        if (size - offset < 8 || used >= capacity || used >= INT32_MAX) return -1;
+        const auto header = little(data + offset, 2);
+        const auto type = (header >> 12) & 3;
+        if (type > 2) return -1;
+        BeachWolf::Event schema(0, 0, static_cast<BeachWolf::EventLogType>(type), 0);
+        const size_t record_size = schema.SerializeSize();
+        if (record_size > size - offset) return -1;
         BeachWolf::Event event;
-        ser4cpp::rseq_t sequence(record.data(), record.size());
+        ser4cpp::rseq_t sequence(data + offset, record_size);
         event.Deserialize(sequence);
-        const uint32_t value_bits = type == 0 ? 1 : type == 1 || short_counter ? 16 : 32;
         out[used++] = {event.Time(), static_cast<uint32_t>(event.Type()),
-                      event.Position(), *event.Ptr(), value_bits};
-        offset += wire_size;
+                      event.Position(), *event.Ptr(), type == 0 ? 1u : type == 1 ? 16u : 32u};
+        offset += record_size;
     }
     return static_cast<int>(used);
 }
@@ -289,239 +184,13 @@ std::shared_ptr<Settings> new_settings(bool recloser) {
     return settings;
 }
 
-bool select_settings_wire_layout(
-    const std::shared_ptr<Settings>& settings, bool recloser, size_t payload_size
-) {
-    if (settings->SerializeSize() == payload_size) return true;
-
-    // Revision-50 devices in the field use the layout from before the final
-    // branch commits appended seven DO timers and the new voltage elements.
-    // Those fields were appended to each typed list, so trimming only their
-    // tails preserves every original byte offset and keeps the branch model.
-    const size_t removed_dwords = recloser ? 39 : 7;
-    const size_t removed_bytes = recloser ? 32 : 0;
-    const size_t removed_dbits = recloser ? 32 : 0;
-    if (
-        settings->dword_list.size() < removed_dwords ||
-        settings->byte_list.size() < removed_bytes ||
-        settings->dbit_list.size() < removed_dbits
-    ) return false;
-
-    settings->dword_list.resize(settings->dword_list.size() - removed_dwords);
-    settings->byte_list.resize(settings->byte_list.size() - removed_bytes);
-    settings->dbit_list.resize(settings->dbit_list.size() - removed_dbits);
-    return settings->SerializeSize() == payload_size;
-}
-
 void add_number(cJSON* object, const char* name, double value) {
     cJSON_AddItemToObject(object, name, cJSON_CreateNumber(value));
 }
 
-void add_number(cJSON* array, double value) {
-    cJSON_AddItemToArray(array, cJSON_CreateNumber(value));
-}
-
-uint32_t object_number(cJSON* object, const char* name, uint32_t fallback, uint32_t maximum);
-
-void add_fast_trip_max_mode(cJSON* group, const char* pack_name, const OCEF_Pack& pack) {
-    cJSON* pack_json = cJSON_GetObjectItemCaseSensitive(group, pack_name);
-    if (!cJSON_IsObject(pack_json)) return;
-    const char* directions[] = {"f", "r"};
-    const ElementPack* packs[] = {&pack.forward, &pack.reverse};
-    for (size_t index = 0; index < 2; ++index) {
-        cJSON* direction = cJSON_GetObjectItemCaseSensitive(pack_json, directions[index]);
-        cJSON* fast = cJSON_GetObjectItemCaseSensitive(direction, "f");
-        cJSON* tcc = cJSON_GetObjectItemCaseSensitive(fast, "t");
-        if (!cJSON_IsObject(tcc)) continue;
-        cJSON_DeleteItemFromObjectCaseSensitive(tcc, "mm");
-        add_number(tcc, "mm", packs[index]->fast_trip.tcc.max_mode);
-    }
-}
-
-void apply_fast_trip_max_mode(cJSON* group, const char* pack_name, OCEF_Pack& pack) {
-    cJSON* pack_json = cJSON_GetObjectItemCaseSensitive(group, pack_name);
-    if (!cJSON_IsObject(pack_json)) return;
-    const char* directions[] = {"f", "r"};
-    ElementPack* packs[] = {&pack.forward, &pack.reverse};
-    for (size_t index = 0; index < 2; ++index) {
-        cJSON* direction = cJSON_GetObjectItemCaseSensitive(pack_json, directions[index]);
-        cJSON* fast = cJSON_GetObjectItemCaseSensitive(direction, "f");
-        cJSON* tcc = cJSON_GetObjectItemCaseSensitive(fast, "t");
-        packs[index]->fast_trip.tcc.max_mode = static_cast<uint8_t>(
-            object_number(tcc, "mm", packs[index]->fast_trip.tcc.max_mode, 1)
-        );
-    }
-}
-
-cJSON* function_json(const Configure::Function& function) {
-    cJSON* item = cJSON_CreateObject();
-    cJSON* operands = cJSON_CreateArray();
-    cJSON* state = cJSON_CreateArray();
-    if (!item || !operands || !state) {
-        cJSON_Delete(item);
-        cJSON_Delete(operands);
-        cJSON_Delete(state);
-        return nullptr;
-    }
-    add_number(item, "t", function.time);
-    add_number(item, "v", function.avalue);
-    add_number(operands, function.doperands[0]);
-    add_number(operands, function.doperands[1]);
-    add_number(operands, function.doperands[2]);
-    add_number(operands, function.aoperand);
-    add_number(state, static_cast<uint8_t>(function.enabled));
-    add_number(state, static_cast<uint8_t>(function.dvalue));
-    add_number(state, static_cast<uint8_t>(function.source));
-    add_number(state, static_cast<uint8_t>(function.doperator));
-    add_number(state, static_cast<uint8_t>(function.aoperator));
-    add_number(state, static_cast<uint8_t>(function.action));
-    cJSON_AddItemToObject(item, "o", operands);
-    cJSON_AddItemToObject(item, "s", state);
-    return item;
-}
-
-bool add_settings_extensions(cJSON* root, const Configure& config) {
-    cJSON* system = cJSON_GetObjectItemCaseSensitive(root, "sy");
-    cJSON* protection = cJSON_GetObjectItemCaseSensitive(root, "p");
-    if (!cJSON_IsObject(system) || !cJSON_IsObject(protection)) return false;
-
-    cJSON* functions = cJSON_CreateArray();
-    if (!functions) return false;
-    for (const auto& function : config.funcs) {
-        cJSON* item = function_json(function);
-        if (!item) {
-            cJSON_Delete(functions);
-            return false;
-        }
-        cJSON_AddItemToArray(functions, item);
-    }
-    cJSON_ReplaceItemInObjectCaseSensitive(system, "fn", functions);
-
-    cJSON* groups = cJSON_GetObjectItemCaseSensitive(protection, "g");
-    if (!cJSON_IsArray(groups)) return false;
-    for (int index = 0; index < 4; ++index) {
-        cJSON* group = cJSON_GetArrayItem(groups, index);
-        cJSON* sectionalizing = cJSON_GetObjectItemCaseSensitive(group, "sc");
-        if (!cJSON_IsObject(sectionalizing)) return false;
-        cJSON_DeleteItemFromObjectCaseSensitive(sectionalizing, "s");
-        add_number(sectionalizing, "s", config.prot.groups[index].sectionalizing_mode);
-        add_fast_trip_max_mode(group, "o", config.prot.groups[index].ocef.oc);
-        add_fast_trip_max_mode(group, "e", config.prot.groups[index].ocef.ef);
-        add_fast_trip_max_mode(group, "nps", config.nps[index]);
-
-        // The company array helper views these signed words as uint16_t.
-        // Export their actual signed values after lossless numeric conversion.
-        cJSON* admittance = cJSON_GetObjectItemCaseSensitive(group, "ad");
-        cJSON* conductance = cJSON_GetObjectItemCaseSensitive(admittance, "c");
-        const auto& adm = config.admittance[index];
-        const int16_t signed_values[] = {
-            adm.forward_susceptance, adm.reverse_susceptance,
-            adm.forward_conductance, adm.reverse_conductance,
-        };
-        for (int field = 0; field < 4; ++field) {
-            cJSON* number = cJSON_GetArrayItem(conductance, field + 1);
-            if (cJSON_IsNumber(number)) cJSON_SetNumberValue(number, signed_values[field]);
-        }
-
-        cJSON* maximums = cJSON_CreateArray();
-        if (!maximums) return false;
-        const auto& values = config.c_max[index];
-        add_number(maximums, values.oc2_f);
-        add_number(maximums, values.oc2_r);
-        add_number(maximums, values.ef2_f);
-        add_number(maximums, values.ef2_r);
-        add_number(maximums, values.nps2_f);
-        add_number(maximums, values.nps2_r);
-        cJSON_DeleteItemFromObjectCaseSensitive(group, "cm");
-        cJSON_AddItemToObject(group, "cm", maximums);
-    }
-    return true;
-}
-
-uint32_t number_value(cJSON* value, uint32_t fallback, uint32_t maximum) {
-    if (!cJSON_IsNumber(value) || value->valuedouble < 0) return fallback;
-    return static_cast<uint32_t>(std::min<double>(value->valuedouble, maximum));
-}
-
-uint32_t object_number(cJSON* object, const char* name, uint32_t fallback, uint32_t maximum) {
-    return number_value(cJSON_GetObjectItemCaseSensitive(object, name), fallback, maximum);
-}
-
-void apply_settings_extensions(cJSON* root, Configure& config) {
-    cJSON* system = cJSON_GetObjectItemCaseSensitive(root, "sy");
-    cJSON* functions = cJSON_GetObjectItemCaseSensitive(system, "fn");
-    if (cJSON_IsArray(functions)) {
-        const int count = std::min(16, cJSON_GetArraySize(functions));
-        for (int index = 0; index < count; ++index) {
-            cJSON* item = cJSON_GetArrayItem(functions, index);
-            if (!cJSON_IsObject(item)) continue;
-            auto& function = config.funcs[index];
-            function.time = object_number(item, "t", function.time, UINT32_MAX);
-            function.avalue = object_number(item, "v", function.avalue, UINT32_MAX);
-            cJSON* operands = cJSON_GetObjectItemCaseSensitive(item, "o");
-            if (cJSON_IsArray(operands) && cJSON_GetArraySize(operands) >= 4) {
-                function.doperands[0] = number_value(cJSON_GetArrayItem(operands, 0), function.doperands[0], UINT16_MAX);
-                function.doperands[1] = number_value(cJSON_GetArrayItem(operands, 1), function.doperands[1], UINT16_MAX);
-                function.doperands[2] = number_value(cJSON_GetArrayItem(operands, 2), function.doperands[2], UINT16_MAX);
-                function.aoperand = number_value(cJSON_GetArrayItem(operands, 3), function.aoperand, UINT16_MAX);
-            }
-            cJSON* state = cJSON_GetObjectItemCaseSensitive(item, "s");
-            if (cJSON_IsArray(state) && cJSON_GetArraySize(state) >= 6) {
-                function.enabled = static_cast<EnDi>(number_value(cJSON_GetArrayItem(state, 0), static_cast<uint8_t>(function.enabled), 1));
-                function.dvalue = static_cast<TrFa>(number_value(cJSON_GetArrayItem(state, 1), static_cast<uint8_t>(function.dvalue), 1));
-                function.source = static_cast<FNSourceType>(number_value(cJSON_GetArrayItem(state, 2), static_cast<uint8_t>(function.source), 1));
-                function.doperator = static_cast<DOperator>(number_value(cJSON_GetArrayItem(state, 3), static_cast<uint8_t>(function.doperator), 2));
-                function.aoperator = static_cast<AOperator>(number_value(cJSON_GetArrayItem(state, 4), static_cast<uint8_t>(function.aoperator), 1));
-                function.action = static_cast<IOAction>(number_value(cJSON_GetArrayItem(state, 5), static_cast<uint8_t>(function.action), 2));
-            }
-        }
-    }
-
-    cJSON* protection = cJSON_GetObjectItemCaseSensitive(root, "p");
-    cJSON* groups = cJSON_GetObjectItemCaseSensitive(protection, "g");
-    if (!cJSON_IsArray(groups)) return;
-    const int count = std::min(4, cJSON_GetArraySize(groups));
-    for (int index = 0; index < count; ++index) {
-        cJSON* group = cJSON_GetArrayItem(groups, index);
-        cJSON* sectionalizing = cJSON_GetObjectItemCaseSensitive(group, "sc");
-        config.prot.groups[index].sectionalizing_mode = static_cast<uint8_t>(
-            object_number(sectionalizing, "s", config.prot.groups[index].sectionalizing_mode, 1)
-        );
-        apply_fast_trip_max_mode(group, "o", config.prot.groups[index].ocef.oc);
-        apply_fast_trip_max_mode(group, "e", config.prot.groups[index].ocef.ef);
-        apply_fast_trip_max_mode(group, "nps", config.nps[index]);
-
-        cJSON* maximums = cJSON_GetObjectItemCaseSensitive(group, "cm");
-        if (cJSON_IsArray(maximums) && cJSON_GetArraySize(maximums) >= 6) {
-            auto& values = config.c_max[index];
-            values.oc2_f = number_value(cJSON_GetArrayItem(maximums, 0), values.oc2_f, UINT16_MAX);
-            values.oc2_r = number_value(cJSON_GetArrayItem(maximums, 1), values.oc2_r, UINT16_MAX);
-            values.ef2_f = number_value(cJSON_GetArrayItem(maximums, 2), values.ef2_f, UINT16_MAX);
-            values.ef2_r = number_value(cJSON_GetArrayItem(maximums, 3), values.ef2_r, UINT16_MAX);
-            values.nps2_f = number_value(cJSON_GetArrayItem(maximums, 4), values.nps2_f, UINT16_MAX);
-            values.nps2_r = number_value(cJSON_GetArrayItem(maximums, 5), values.nps2_r, UINT16_MAX);
-        }
-    }
-}
-
-char* settings_json(const Configure& config) {
-    char* company_json = setting_to_json(const_cast<Configure*>(&config));
-    if (!company_json) return nullptr;
-    cJSON* root = cJSON_Parse(company_json);
-    json_free(company_json);
-    if (!root) return nullptr;
-    if (!add_settings_extensions(root, config)) {
-        cJSON_Delete(root);
-        return nullptr;
-    }
-    char* result = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
-    return result;
-}
-
 int copy_settings_json(const std::shared_ptr<Settings>& settings, char* out, size_t capacity) {
     if (!out || !capacity) return -1;
-    char* json = settings_json(settings->config);
+    char* json = setting_to_json(&settings->config);
     if (!json) return -1;
     const size_t length = std::strlen(json);
     if (length + 1 > capacity || length > INT32_MAX) {
@@ -534,7 +203,7 @@ int copy_settings_json(const std::shared_ptr<Settings>& settings, char* out, siz
 }
 }
 
-uint32_t __cdecl be_abi_version(void) { return 8; }
+uint32_t __cdecl be_abi_version(void) { return 10; }
 
 int __cdecl be_info(const uint8_t* data, size_t size, BEInfo* out) {
     if (!data || !out || size < 16) return -1;
@@ -546,10 +215,7 @@ int __cdecl be_info(const uint8_t* data, size_t size, BEInfo* out) {
 int __cdecl be_measurements(const uint8_t* data, size_t size, BEPoint* out, size_t capacity) {
     if (!data || !out) return -1;
     std::vector<Block> blocks;
-    if (parse_blocks(data, size, blocks) < 0) {
-        blocks.clear();
-        if (parse_legacy_blocks(data, size, blocks) < 0) return -1;
-    }
+    if (parse_blocks(data, size, blocks) < 0) return -1;
     size_t used = 0;
     uint32_t binary_offset = 0, analog_offset = 0, counter_offset = 0;
     for (const auto& block : blocks) {
@@ -558,9 +224,7 @@ int __cdecl be_measurements(const uint8_t* data, size_t size, BEPoint* out, size
             : block.type == M_TYPE_AI ? analog_offset : counter_offset;
         for (uint32_t i = 0; i < block.count; ++i) {
             const uint32_t value = block.type == M_TYPE_BI
-                ? (block.binary_packed
-                    ? ((block.values[i / 8] >> (i % 8)) & 1u)
-                    : block.values[i])
+                ? ((block.values[i / 8] >> (i % 8)) & 1u)
                 : little(block.values + i * (block.type == M_TYPE_AI ? 2 : 4), block.type == M_TYPE_AI ? 2 : 4);
             out[used++] = {block.type, channel_offset + i, value};
         }
@@ -575,10 +239,7 @@ int __cdecl be_measurements_named(
 ) {
     if (!data || !out) return -1;
     std::vector<Block> blocks;
-    if (parse_blocks(data, size, blocks) < 0) {
-        blocks.clear();
-        if (parse_legacy_blocks(data, size, blocks) < 0) return -1;
-    }
+    if (parse_blocks(data, size, blocks) < 0) return -1;
     size_t used = 0;
     uint32_t named_types = 0;
     for (const auto& block : blocks) {
@@ -588,13 +249,16 @@ int __cdecl be_measurements_named(
         if (named_types & block.type) return -1;
         named_types |= block.type;
         if (block.type == M_TYPE_BC) {
-            if (block.count > capacity - used) return -1;
-            for (uint32_t i = 0; i < block.count; ++i) {
+            CCs points;
+            for (auto& point : points.list) point.Enable();
+            disable_points(points, model != 2, company_revision(build));
+            auto enabled = enabled_in_wire_order(points.list);
+            if (block.count != enabled.size() || block.count > capacity - used) return -1;
+            points.Deserialize(const_cast<uint8_t*>(block.values));
+            for (auto* point : enabled) {
                 auto& target = out[used++];
-                target = {M_TYPE_BC, i, i, little(block.values + i * 4, 4), {}};
-                char name[32]{};
-                std::snprintf(name, sizeof(name), "Counter %u", i);
-                copy_name(target, name);
+                target = {M_TYPE_BC, point->id, point->dnp3.index, point->Value(), {}};
+                copy_name(target, point->Name());
             }
             continue;
         }
@@ -609,50 +273,16 @@ int __cdecl be_measurements_named(
 }
 
 int __cdecl be_events(const uint8_t* data, size_t size, BEEvent* out, size_t capacity) {
-    return decode_company_event_stream(data, size, out, capacity, 0);
+    return decode_company_event_stream(data, size, out, capacity);
 }
 
 int __cdecl be_events_named(
-    const uint8_t* data, size_t size, uint32_t model, uint32_t build, uint32_t format,
+    const uint8_t* data, size_t size, uint32_t model, uint32_t build,
     BENamedEvent* out, size_t capacity
 ) {
-    if (!data || !out || format > 4) return -1;
-    // Some FC22 firmware generations report a new/unknown build while still
-    // downloading the raw Events struct.  Detect its strict 8-byte header and
-    // 16-byte slot layout instead of trusting the INFO revision alone.
-    const bool ring = looks_like_event_ring(data, size);
-    if (format == 2 && !ring) return -1;
-    if ((format == 0 || format == 2) && ring) {
-        const size_t slots = (size - 8) / 16;
-        const size_t next = little(data, 2);
-        const bool wrapped = data[2] != 0;
-        const size_t count = wrapped ? slots : std::min(next, slots);
-        if (count > capacity || count > INT32_MAX) return -1;
-        for (size_t i = 0; i < count; ++i) {
-            const size_t index = (next + slots - 1 - i) % slots;
-            const uint8_t* record = data + 8 + index * 16;
-            auto& target = out[i];
-            target = {
-                little64(record),
-                record[14],
-                static_cast<uint32_t>(little(record + 12, 2)),
-                little(record + 8, 4),
-                record[14] == 0 ? 1u : record[14] == 1 ? 16u : 32u,
-                {}
-            };
-            const char* name = event_name(target.type, target.source_index, model, build);
-            if (name) copy_name(target, name);
-            else {
-                char fallback[32]{};
-                const char* prefix = target.type == 0 ? "BI" : target.type == 1 ? "AI" : "CC";
-                std::snprintf(fallback, sizeof(fallback), "%s %u", prefix, target.source_index);
-                copy_name(target, fallback);
-            }
-        }
-        return static_cast<int>(count);
-    }
+    if (!data || !out) return -1;
     std::vector<BEEvent> decoded(std::max<size_t>(1, size / 8));
-    const int count = decode_company_event_stream(data, size, decoded.data(), decoded.size(), format);
+    const int count = decode_company_event_stream(data, size, decoded.data(), decoded.size());
     if (count < 0 || static_cast<size_t>(count) > capacity) return -1;
     for (int i = 0; i < count; ++i) {
         const auto& source = decoded[i];
@@ -671,19 +301,10 @@ int __cdecl be_events_named(
 }
 
 int __cdecl be_signal(const uint8_t* data, size_t size, float* out, size_t capacity) {
-    constexpr size_t modern_bytes = offsetof(Signals, Vbat);
-    constexpr size_t legacy_bytes = 7 * SIG_BUFF_SIZE * sizeof(float);
-    if (!data || !out || capacity < modern_bytes / sizeof(float)) return -1;
-    if (size >= modern_bytes) {
-        std::memcpy(out, data, modern_bytes);
-        return static_cast<int>(modern_bytes / sizeof(float));
-    }
-    if (size >= legacy_bytes) {
-        std::memcpy(out, data, legacy_bytes);
-        std::memset(reinterpret_cast<uint8_t*>(out) + legacy_bytes, 0, modern_bytes - legacy_bytes);
-        return static_cast<int>(legacy_bytes / sizeof(float));
-    }
-    return -1;
+    constexpr size_t bytes = offsetof(Signals, Vbat);
+    if (!data || !out || size < bytes || capacity < bytes / sizeof(float)) return -1;
+    std::memcpy(out, data, bytes);
+    return static_cast<int>(bytes / sizeof(float));
 }
 
 int __cdecl be_frame_build(
@@ -783,7 +404,7 @@ int __cdecl be_settings_payload_json(
     if (!data) return -1;
     const bool recloser = model != 2;
     auto settings = new_settings(recloser);
-    if (!select_settings_wire_layout(settings, recloser, size)) return -1;
+    if (settings->SerializeSize() != size) return -1;
     settings->Deserialize(const_cast<uint8_t*>(data));
     return copy_settings_json(settings, out, capacity);
 }
@@ -800,7 +421,6 @@ int __cdecl be_settings_encode_json(
         cJSON_Delete(parsed);
         return -1;
     }
-    apply_settings_extensions(parsed, settings->config);
     cJSON_Delete(parsed);
     settings->PrepareLists(&settings->config, model != 2);
     const size_t payload_size = settings->SerializeSize();
@@ -819,7 +439,7 @@ int __cdecl be_settings_decode_json(
     if (flags > 1 || frame_crc(data, size - 2) != little(data + size - 2, 2)) return -1;
     const bool recloser = flags == 1;
     auto settings = new_settings(recloser);
-    if (!select_settings_wire_layout(settings, recloser, size - 3)) return -1;
+    if (settings->SerializeSize() != size - 3) return -1;
     settings->Deserialize(const_cast<uint8_t*>(data));
     return copy_settings_json(settings, out, capacity);
 }
@@ -830,7 +450,7 @@ int __cdecl be_settings_file_from_payload(
     if (!data || !out || size + 3 > capacity || size + 3 > INT32_MAX) return -1;
     const bool recloser = model != 2;
     auto settings = new_settings(recloser);
-    if (!select_settings_wire_layout(settings, recloser, size)) return -1;
+    if (settings->SerializeSize() != size) return -1;
     std::memcpy(out, data, size);
     out[size] = model == 2 ? 0 : 1;
     put_little(out + size + 1, frame_crc(out, size + 1), 2);
@@ -844,66 +464,27 @@ int __cdecl be_settings_patch_payload_json(
 ) {
     if (!base || !json || !json_size || !out) return -1;
     const bool recloser = model != 2;
-    auto original = new_settings(recloser);
-    if (!select_settings_wire_layout(original, recloser, base_size)) return -1;
-    const size_t payload_size = original->SerializeSize();
-    if (capacity < payload_size || payload_size > INT32_MAX) return -1;
-
-    // The company's JSON conversion is not byte-idempotent: applying an
-    // unchanged JSON document also normalizes legacy/reserved members. Build
-    // both the unchanged and edited forms, then copy only the byte differences
-    // caused by the user's edit onto the exact input payload.
-    original->Deserialize(const_cast<uint8_t*>(base));
-    char* original_json = settings_json(original->config);
-    if (!original_json) return -1;
-
-    auto serialize_with_json = [&](const char* source, size_t source_size, std::vector<uint8_t>& target) {
-        std::string document(source, source_size);
-        cJSON* parsed = cJSON_Parse(document.c_str());
-        if (!parsed) return false;
-        auto settings = new_settings(recloser);
-        if (!select_settings_wire_layout(settings, recloser, payload_size)) {
-            cJSON_Delete(parsed);
-            return false;
-        }
-        settings->Deserialize(const_cast<uint8_t*>(base));
-        if (!json_to_setting(document.c_str(), settings)) {
-            cJSON_Delete(parsed);
-            return false;
-        }
-        apply_settings_extensions(parsed, settings->config);
-        cJSON_Delete(parsed);
-        target.resize(payload_size);
-        settings->Serialize(target.data());
-        return true;
-    };
-
-    std::vector<uint8_t> baseline;
-    std::vector<uint8_t> edited;
-    const bool baseline_ok = serialize_with_json(
-        original_json, std::strlen(original_json), baseline
-    );
-    cJSON_free(original_json);
-    if (!baseline_ok || !serialize_with_json(json, json_size, edited)) return -1;
-
-    std::memcpy(out, base, payload_size);
-    for (size_t i = 0; i < payload_size; ++i) {
-        if (edited[i] != baseline[i]) out[i] = edited[i];
-    }
+    auto settings = new_settings(recloser);
+    const size_t payload_size = settings->SerializeSize();
+    if (base_size != payload_size || capacity < payload_size || payload_size > INT32_MAX) return -1;
+    settings->Deserialize(const_cast<uint8_t*>(base));
+    const std::string source(json, json_size);
+    if (!json_to_setting(source.c_str(), settings)) return -1;
+    settings->PrepareLists(&settings->config, recloser);
+    settings->Serialize(out);
     return static_cast<int>(payload_size);
 }
 
-size_t __cdecl be_settings_legacy_size(void) {
-    return sizeof(Configure);
-}
-
-int __cdecl be_settings_legacy_payload_json(
-    const uint8_t* data, size_t size, char* out, size_t capacity
+int __cdecl be_editor_payload_json(
+    const uint8_t* data, size_t size, uint32_t model, char* out, size_t capacity
 ) {
-    if (!data || !size || size > sizeof(Configure) || !out || !capacity) return -1;
-    Configure config{};
-    std::memcpy(&config, data, size);
-    char* json = settings_json(config);
+    if (!data || !out) return -1;
+    auto settings = new_settings(model != 2);
+    if (settings->SerializeSize() != size) return -1;
+    settings->Deserialize(const_cast<uint8_t*>(data));
+    cJSON* document = editor_snapshot(settings->config);
+    char* json = cJSON_PrintUnformatted(document);
+    cJSON_Delete(document);
     if (!json) return -1;
     const size_t length = std::strlen(json);
     if (length + 1 > capacity || length > INT32_MAX) {
@@ -915,46 +496,20 @@ int __cdecl be_settings_legacy_payload_json(
     return static_cast<int>(length);
 }
 
-int __cdecl be_settings_legacy_patch_payload_json(
-    const uint8_t* base, size_t base_size,
-    const char* json, size_t json_size,
-    uint8_t* out, size_t capacity
+int __cdecl be_editor_patch_payload_json(
+    const uint8_t* base, size_t size, const char* json, size_t json_size,
+    uint32_t model, uint8_t* out, size_t capacity
 ) {
-    if (!base || !base_size || base_size > sizeof(Configure) || !json || !json_size ||
-        !out || capacity < base_size) return -1;
-
-    Configure original{};
-    std::memcpy(&original, base, base_size);
-    char* original_json = settings_json(original);
-    if (!original_json) return -1;
-
-    auto apply = [&](const char* source, size_t source_size, std::vector<uint8_t>& target) {
-        std::string document(source, source_size);
-        cJSON* parsed = cJSON_Parse(document.c_str());
-        if (!parsed) return false;
-        auto settings = std::make_shared<Settings>();
-        std::memset(&settings->config, 0, sizeof(Configure));
-        std::memcpy(&settings->config, base, base_size);
-        if (!json_to_setting(document.c_str(), settings)) {
-            cJSON_Delete(parsed);
-            return false;
-        }
-        apply_settings_extensions(parsed, settings->config);
-        cJSON_Delete(parsed);
-        target.resize(sizeof(Configure));
-        std::memcpy(target.data(), &settings->config, sizeof(Configure));
-        return true;
-    };
-
-    std::vector<uint8_t> baseline;
-    std::vector<uint8_t> edited;
-    const bool baseline_ok = apply(original_json, std::strlen(original_json), baseline);
-    cJSON_free(original_json);
-    if (!baseline_ok || !apply(json, json_size, edited)) return -1;
-
-    std::memcpy(out, base, base_size);
-    for (size_t i = 0; i < base_size; ++i) {
-        if (edited[i] != baseline[i]) out[i] = edited[i];
-    }
-    return static_cast<int>(base_size);
+    if (!base || !json || !json_size || !out) return -1;
+    auto settings = new_settings(model != 2);
+    if (settings->SerializeSize() != size || size > capacity || size > INT32_MAX) return -1;
+    settings->Deserialize(const_cast<uint8_t*>(base));
+    const std::string source(json, json_size);
+    cJSON* document = cJSON_Parse(source.c_str());
+    const bool valid = editor_apply(settings->config, document);
+    cJSON_Delete(document);
+    if (!valid) return -1;
+    settings->PrepareLists(&settings->config, model != 2);
+    settings->Serialize(out);
+    return static_cast<int>(size);
 }

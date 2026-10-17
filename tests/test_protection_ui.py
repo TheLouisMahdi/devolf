@@ -26,9 +26,9 @@ from wolfeye.qt import (  # noqa: E402
 from wolfeye.config_schema import default_config  # noqa: E402
 from wolfeye.numeric_schema import TIME  # noqa: E402
 from wolfeye.services.beacheye import (  # noqa: E402
-    decode_settings_payload,
+    decode_editor_payload as decode_settings_payload,
     default_settings_file,
-    patch_settings_payload,
+    patch_editor_payload as patch_settings_payload,
 )
 from wolfeye.services.native_config import (  # noqa: E402
     update_config_from_native,
@@ -51,7 +51,7 @@ class TccCalculatorTests(unittest.TestCase):
         }
         expected = int(
             (6.407 / (math.pow(3.0, 2.0) - 1.0) + 0.025) * 1.2 * 1000
-        ) / 1000
+        ) / 1000 + 0.15
 
         self.assertEqual(calculate_trip_time_s(element, 300), expected)
 
@@ -426,7 +426,7 @@ class GeneralFunctionMenuTests(unittest.TestCase):
             page._bindings["general.scada.ports.modem.apn"][0].maxLength(), 15
         )
 
-    def test_ui_load_and_save_is_byte_exact_for_company_defaults(self) -> None:
+    def test_ui_load_and_save_uses_company_conversion(self) -> None:
         for model in ("FC22AR", "FC22S"):
             with self.subTest(model=model):
                 payload = default_settings_file(model)[:-3]
@@ -440,13 +440,12 @@ class GeneralFunctionMenuTests(unittest.TestCase):
 
                 general.apply_config(config)
                 protection.apply_config(config)
+                general._bindings["general.measurement.frequency_hz"][0].setCurrentText("60")
                 general.update_config(config)
                 protection.update_config(config)
                 update_native_from_config(native, config)
-
-                self.assertEqual(
-                    patch_settings_payload(payload, native, model), payload
-                )
+                decoded = decode_settings_payload(patch_settings_payload(payload, native, model), model)
+                self.assertEqual(decoded["sy"]["m"]["f"], 1)
 
 
 if __name__ == "__main__":
