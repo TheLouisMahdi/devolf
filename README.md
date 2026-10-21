@@ -21,12 +21,13 @@ Supported target: **Windows 10/11, x64**, with **Python 3.11 x64**.
   pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-ninja
   ```
 
-- A GitHub account with read access to the private `majidnow/BeachEye` repository:
+- A GitHub account with read access to both private company repositories:
 
   ```powershell
   gh auth login
   gh auth status
   gh repo view majidnow/BeachEye
+  gh repo view majidnow/wolfeye
   ```
 
 ### Build command
@@ -37,20 +38,20 @@ Run from the repository root:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-To fetch the latest company `ver_50_remaster` revision on each build:
+To update both BeachEye `ver_50_remaster` and WolfEye `master`, then run the full build:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -UpdateBeachEye
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -UpdateBeachEye -UpdateWolfEye
 ```
 
-The update records the selected SHA in `beacheye-source.json`. Omitting the
-switch repeats that recorded SHA. See [guidebuild.txt](guidebuild.txt) for the
+The switches update `beacheye-source.json` and `wolfeye-source.json` independently.
+Omitting both repeats the recorded SHAs. See [guidebuild.txt](guidebuild.txt) for the
 English command reference, native-only builds and custom build options.
 
 **Output:** `Dist\DEVolf.exe`.
 
 The script creates `.venv` when needed, installs `requirements.txt`, builds
-the pinned company native library, runs the tests, packages one EXE and checks its startup.
+both company native DLLs, runs all tests in `tests`, packages one EXE and checks its startup.
 GCC/Ninja are selected explicitly. The default toolchain is
 `C:\msys64\ucrt64\bin`; use `DEVOLF_GCC_BIN` for a different installation.
 
@@ -75,8 +76,8 @@ $env:DEVOLF_BEACHEYE_CACHE = 'D:\PrivateBuildCache\DEVolf-BeachEye'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-Normal builds use [the pinned manifest](beacheye-source.json); `-UpdateBeachEye`
-resolves the latest company branch commit and refreshes that pin.
+Normal builds use the pinned manifests. `-UpdateBeachEye` selects the latest
+BeachEye branch commit; `-UpdateWolfEye` selects the latest WolfEye master commit.
 The resolver requires `majidnow/BeachEye` and `ver_50_remaster`; alternate
 repository, branch and revision build options have been removed.
 
@@ -92,8 +93,8 @@ never rewrites company headers, JSON conversion or serialization. Modified
 checkouts are rejected by resolution, CMake and the post-build check.
 
 All relay read/write, measurements and events use **BeachEye
-`ver_50_remaster`**, currently pinned to `bee19ba2851658f03601375aec458a21633055bb`
-(branch head checked on 2026-10-20). A device reporting build 51 still uses
+`ver_50_remaster`** at the exact SHA in [beacheye-source.json](beacheye-source.json).
+A device reporting build 51 still uses
 this branch's `DisablePoints(model, build)` mapping; no separate revision-51
 DLL is selected. FC22AR build 51 uses 410 binary and 122 analog points in a
 300-byte packed BI/AI response.
@@ -116,7 +117,7 @@ automatic fallback have been removed. Events use the company's current
 Signals use the company's ten-channel structure with 32 or 64 samples per
 channel, selected by INFO flag `0x02`, at 1600 or 3200 Sa/s respectively.
 32-sample devices may return fixed-size buffers; only the INFO-selected
-prefix is plotted. See [the SIGNAL/ADC audit](docs/SIGNAL_ADC_PARITY_2026-10-21.md).
+prefix is plotted. See [signal decoding and diagnostics](docs/COMPANY_PARITY_AUDIT.md#signal-and-numeric-contracts).
 Get ADC uses the original company signal loader, one cycle at a time.
 BeachEye bridge ABI is **12**; WolfEye core ABI is **1**. Rebuild both DLLs
 and the EXE together. `wolfeye_core.dll` runs the company TCC calculator,
@@ -307,7 +308,7 @@ the normal build.
 ## Documentation
 
 - [Complete company file mapping and DEVolf module responsibilities](docs/UPSTREAM_SYNC.md)
-- [Numeric settings audit](docs/NUMERIC_SETTINGS_AUDIT.md) and [field inventory](docs/NUMERIC_SETTINGS_AUDIT.csv)
+- [Current numeric storage limits](code/wolfeye/numeric_schema.py) and [regression tests](tests/test_numeric_settings.py)
 - [Release notes](docs/RELEASE_NOTES.md)
 - [Public release checklist](docs/PUBLIC_RELEASE_CHECKLIST.md)
 - [English build command reference](guidebuild.txt)

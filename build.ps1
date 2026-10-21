@@ -3,6 +3,7 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$Name = "DEVolf",
     [switch]$UpdateBeachEye,
+    [switch]$UpdateWolfEye,
     [string]$WolfEyeSourceDirectory,
     [string]$PythonExecutable,
     [string]$Wheelhouse
@@ -107,6 +108,7 @@ if ($pythonVersion -ne $pythonVersionRequired -or [int]$pythonBits -ne $pythonBi
 $nativeBuildArguments = @{}
 $nativeBuildArguments.OutputDirectory = $nativeDirectory
 $nativeBuildArguments.UpdateBeachEye = $UpdateBeachEye
+$nativeBuildArguments.UpdateWolfEye = $UpdateWolfEye
 $nativeBuildArguments.WolfEyeSourceDirectory = $WolfEyeSourceDirectory
 & $nativeBuildScript @nativeBuildArguments
 if (-not (Test-Path -LiteralPath $nativeDll -PathType Leaf)) {

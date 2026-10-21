@@ -21,6 +21,8 @@ from wolfeye.services.beacheye import (
     decode_measurements,
     decode_events,
     decode_settings_payload,
+    decode_editor_payload,
+    patch_editor_payload,
     decode_settings_file,
     default_settings_json,
     default_settings_file,
@@ -228,18 +230,18 @@ class NativeBridgeTests(unittest.TestCase):
             with self.subTest(model=model):
                 encoded = default_settings_file(model)
                 payload = encoded[:-3]
-                native = decode_settings_payload(payload, model)
+                native = decode_editor_payload(payload, model)
                 original = deepcopy(native)
                 config = default_config()
                 update_config_from_native(config, native)
                 update_native_from_config(native, config)
                 self.assertEqual(native, original)
-                self.assertEqual(len(patch_settings_payload(payload, native, model)), len(payload))
+                self.assertEqual(patch_editor_payload(payload, native, model), payload)
 
     def test_visible_config_edits_reach_company_payload(self) -> None:
         model = "FC22AR"
         payload = default_settings_file(model)[:-3]
-        native = decode_settings_payload(payload, model)
+        native = decode_editor_payload(payload, model)
         config = default_config()
         update_config_from_native(config, native)
         config["general"]["measurement"]["frequency_hz"] = "60"
@@ -254,8 +256,8 @@ class NativeBridgeTests(unittest.TestCase):
         fast_trip["max_mode"] = True
         fast_trip["max_current_multiplier"] = 7.25
         update_native_from_config(native, config)
-        patched = patch_settings_payload(payload, native, model)
-        decoded = decode_settings_payload(patched, model)
+        patched = patch_editor_payload(payload, native, model)
+        decoded = decode_editor_payload(patched, model)
         self.assertEqual(decoded["sy"]["m"]["f"], 1)
         element = decoded["p"]["g"][0]["o"]["f"]["d"]["t"]
         self.assertEqual(element["i"], 425)
@@ -264,10 +266,13 @@ class NativeBridgeTests(unittest.TestCase):
         self.assertEqual(decoded["sy"]["io"]["o"][0]["t"], 750)
         self.assertEqual(decoded["p"]["g"][0]["uv"]["u"][3]["t"], 4250)
         self.assertEqual(decoded["p"]["g"][0]["ov"][7]["u"], 127)
+        self.assertEqual(decoded["p"]["g"][0]["o"]["f"]["f"]["t"]["mm"], 1)
+        # Company C_MAX stays in desktop Configure and is not serialized.
+        self.assertEqual(native["p"]["g"][0]["cm"][0], 725)
 
 
     def test_iec_menu_round_trip_when_profile_exposes_iec(self) -> None:
-        native = default_settings_json("FC22AR")
+        native = decode_editor_payload(default_settings_file("FC22AR")[:-3], "FC22AR")
         native["s"]["i"] = {
             "as": 1,
             "is": 2,

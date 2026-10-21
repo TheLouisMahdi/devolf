@@ -1,16 +1,18 @@
 # Upstream synchronization manifest
 
-The [2026-10-21 SIGNAL/ADC audit](SIGNAL_ADC_PARITY_2026-10-21.md) documents
-the fixed-size 32-sample response correction and current source comparison.
+The [current signal and numeric contracts](COMPANY_PARITY_AUDIT.md#signal-and-numeric-contracts)
+document the fixed-size 32-sample response correction and diagnostics.
 
-## Current source policy (2026-10-20)
+## Current source policy (2026-10-21)
 
 The current audit is [COMPANY_PARITY_AUDIT.md](COMPANY_PARITY_AUDIT.md).
 It supersedes the dated claims below. User additions, especially EmWolf and
 FC22 Tester, are protected from replacement. Company sources are resolved
-from pristine external checkouts: BeachEye `ver_50_remaster` at
-`bee19ba2851658f03601375aec458a21633055bb` and WolfEye `master` at
-`7e58f4af439c6fa9c9db51e4558936264401732a`. No company-source rewrites run.
+from pristine external checkouts. The exact current SHAs are recorded in
+[beacheye-source.json](../beacheye-source.json) for BeachEye `ver_50_remaster`
+and [wolfeye-source.json](../wolfeye-source.json) for WolfEye `master`.
+The full update build uses `-UpdateBeachEye -UpdateWolfEye`. No company-source
+rewrites run.
 
 Current architecture: BeachEye ABI **12** and independent WolfEye core ABI **1**;
 see [editable sources and boundaries](COMPANY_PARITY_AUDIT.md#current-architecture--2026-10-21).
@@ -322,8 +324,8 @@ application EXE was not built.
 The numeric editing behavior was audited against WolfEye `master` at the same
 `989f9ff` commit. General/Protection editors and the TCC dialog now use shared
 storage limits and precise units, with lossless numeric JSON export in the
-external private dependency cache. See [the numeric audit](NUMERIC_SETTINGS_AUDIT.md) and
-[field inventory](NUMERIC_SETTINGS_AUDIT.csv) for the complete field inventory and checks.
+external private dependency cache. See [current numeric storage rules](../code/wolfeye/numeric_schema.py) and
+[their regression tests](../tests/test_numeric_settings.py).
 
 ## Reproduction commands
 

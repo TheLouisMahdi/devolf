@@ -1,11 +1,15 @@
 [CmdletBinding()]
 param(
     [switch]$UpdateBeachEye,
+    [switch]$UpdateWolfEye,
     [string]$WolfEyeSourceDirectory,
     [string]$OutputDirectory
 )
 
 $ErrorActionPreference = "Stop"
+if ($UpdateWolfEye -and $WolfEyeSourceDirectory) {
+    throw "Use either -UpdateWolfEye for company master or -WolfEyeSourceDirectory for local development sources."
+}
 $projectRoot = $PSScriptRoot
 $source = Join-Path $projectRoot "code\native\beacheye"
 
@@ -73,7 +77,7 @@ function Invoke-NativeBuild(
     }
 }
 
-$sourceInfo = & $resolver -UpdateBeachEye:$UpdateBeachEye
+$sourceInfo = & $resolver -UpdateSource:$UpdateBeachEye
 if ($null -eq $sourceInfo -or -not (Test-Path -LiteralPath $sourceInfo.Path -PathType Container)) {
     throw "BeachEye source resolution did not return a valid directory."
 }
@@ -87,9 +91,10 @@ if ($WolfEyeSourceDirectory) {
     Write-Warning "Development WolfEye source selected: $wolfPath. Local changes are compiled; this is not a pristine company release."
 }
 else {
-    $wolfSourceInfo = & $resolver -Dependency WolfEye
+    $wolfSourceInfo = & $resolver -Dependency WolfEye -UpdateSource:$UpdateWolfEye
 }
 Write-Host "WolfEye source: $($wolfSourceInfo.Path)"
+if ($wolfSourceInfo.Commit) { Write-Host "WolfEye commit: $($wolfSourceInfo.Commit)" }
 
 Write-Host "Building BeachEye branch '$($sourceInfo.Branch)' from $($sourceInfo.SourceKind)."
 Write-Host "BeachEye source: $($sourceInfo.Path)"

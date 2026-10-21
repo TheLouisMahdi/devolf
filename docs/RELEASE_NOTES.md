@@ -1,5 +1,24 @@
 # Release-ready branch
 
+## Build updates and repository cleanup (2026-10-21)
+
+- Add independent `-UpdateWolfEye` and `-UpdateBeachEye` switches to full and
+  native builds. Both exact selected commits are recorded in their manifests.
+- Use `-UpdateSource` in the dependency resolver; retain its old
+  `-UpdateBeachEye` alias for existing scripts.
+- Validate WolfEye update/pin transactions and require its signal-loader source.
+- Move wire-contract tests into the normal `tests/` suite so full builds run them.
+- Exercise visible settings through the same typed editor API as the application,
+  including exact byte preservation on both models; retain separate legacy JSON
+  API coverage. The latest company JSON export represents negative admittance
+  words as unsigned values, so it is not the visible editor snapshot.
+- Consolidate current signal/numeric guidance and remove three superseded audit
+  documents plus the duplicate signal diagnostic note. Application sources,
+  EmWolf, inspection data and scenario files are retained.
+- Full update build verified with BeachEye `0b5b4cce5755a5dba3db1b27413434fb0b6d6c7e`
+  and WolfEye master `7e58f4af439c6fa9c9db51e4558936264401732a`: all **192**
+  tests passed in **136.852 seconds**; the x64 EXE passed packaged startup.
+
 ## DEVolf 0.2 — native WolfEye core and signal fixes (2026-10-21)
 
 - Separate WolfEye company algorithms into `wolfeye_core.dll` (ABI 1), with

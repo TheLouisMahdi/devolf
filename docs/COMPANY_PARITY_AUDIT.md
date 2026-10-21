@@ -73,9 +73,29 @@ the company 32-sample channel offsets. Build log:
 The dated audit below describes earlier builds; its ABI numbers, paths and
 verification counts are historical.
 
-> The [2026-10-21 SIGNAL/ADC audit](SIGNAL_ADC_PARITY_2026-10-21.md)
-> records the confirmed fixed-size 32-sample SIGNAL regression and correction,
-> plus ADC timing, diagnostics and current hardware verification limits.
+## Signal and numeric contracts
+
+INFO bit `0x02` selects 32 samples per channel; otherwise the count is 64.
+SIGNAL values are float32 in either mode; raw ADC words are unsigned uint16.
+At 32 samples, compact 1280/1536-byte and fixed 2560/3072-byte SIGNAL bodies
+are accepted. Only the first 10 * 32 floats are plotted, like company
+`load_signal()`. This fixes the rejected 2560-byte body saved from FC22AR
+build 51 with INFO flags 3. Unused trailing bytes are never plotted.
+
+ADC uses the company half-cycle layout: six interleaved voltage channels,
+then four interleaved current channels, for each half-cycle. Complete cycles
+are retained and displayed at 1600/3200 samples/s. Exact last SIGNAL and ADC
+bodies and INFO metadata are saved separately in
+`%LOCALAPPDATA%/DEVolf/diagnostics/signal-response.bin` and
+`adc-response.bin`, with adjacent `.json` files. Each command overwrites its
+own diagnostics. No actual saved ADC body was available for the hardware audit.
+
+The active settings editor assigns typed Configure fields before the original
+wire serializer runs. `code/wolfeye/numeric_schema.py` holds current storage
+and packed-width bounds; `tests/test_numeric_settings.py` verifies scaling,
+signed values, timers, overflow rejection and round trips. Historical static
+numeric audits and the duplicate signal diagnostic note were removed; current
+contracts live here and executable coverage lives under `tests/`.
 
 > Sampling update (2026-10-20): the active pins are WolfEye master
 > `7e58f4af439c6fa9c9db51e4558936264401732a` and BeachEye ver_50_remaster

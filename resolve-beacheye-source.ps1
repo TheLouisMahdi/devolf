@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [switch]$UpdateBeachEye,
+    [Alias("UpdateBeachEye")][switch]$UpdateSource,
     [ValidateSet("BeachEye", "WolfEye")][string]$Dependency = "BeachEye"
 )
 
@@ -19,7 +19,7 @@ $requiredFiles = @(
 
 if ($Dependency -eq "WolfEye") {
     $requiredFiles = @("WolfEye\include\TCCCalculator.h", "WolfEye\src\TCCCalculator.cpp",
-        "WolfEye\src\SettingsView.cpp", "DataProvider\src\DataProvider.cpp")
+        "WolfEye\src\SettingsView.cpp", "WolfEye\src\FaultViewer.cpp", "DataProvider\src\DataProvider.cpp")
 }
 
 function Get-PrivateCacheRoot {
@@ -140,7 +140,7 @@ if ($Commit -notmatch '^[0-9a-fA-F]{40}$') {
 
 $gh = Get-Command gh -ErrorAction SilentlyContinue
 if ($null -eq $gh) {
-    throw "GitHub CLI (gh) is required to authenticate to the private BeachEye repository."
+    throw "GitHub CLI (gh) is required to authenticate to the private company repositories."
 }
 
 $privacy = Invoke-NativeCommand $gh.Source @("api", "repos/$Repository", "--jq", ".private")
@@ -151,7 +151,7 @@ if (([string]($privacy.Output | Select-Object -Last 1)).Trim().ToLowerInvariant(
     throw "Refusing to use '$Repository': the BeachEye dependency must remain private."
 }
 
-$requestedRevision = if ($UpdateBeachEye) { $Branch } else { $Commit }
+$requestedRevision = if ($UpdateSource) { $Branch } else { $Commit }
 $encodedRevision = [Uri]::EscapeDataString($requestedRevision)
 $remote = Invoke-NativeCommand $gh.Source @("api", "repos/$Repository/commits/$encodedRevision", "--jq", ".sha")
 if ($remote.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace(($remote.Output -join ""))) {
@@ -170,7 +170,7 @@ $snapshotPath = Join-Path $branchCache $remoteCommit
 
 if (Test-CachedRevision $snapshotPath $remoteCommit) {
     Assert-PristineSource $snapshotPath
-    Write-Host "Using authenticated private BeachEye cache: $Repository@$Branch ($($remoteCommit.Substring(0, 12)))"
+    Write-Host "Using authenticated private $Dependency cache: $Repository@$Branch ($($remoteCommit.Substring(0, 12)))"
     $sourceKind = "private-cache"
 }
 else {
@@ -180,7 +180,7 @@ else {
     New-Item -ItemType Directory -Path $branchCache -Force | Out-Null
     $stagingPath = Join-Path $branchCache (".staging-" + [Guid]::NewGuid().ToString("N"))
     try {
-        Write-Host "Downloading private BeachEye dependency: $Repository@$Branch ($($remoteCommit.Substring(0, 12)))"
+        Write-Host "Downloading private $Dependency dependency: $Repository@$Branch ($($remoteCommit.Substring(0, 12)))"
         $clone = Invoke-NativeCommand $gh.Source @(
             "repo", "clone", $Repository, $stagingPath, "--",
             "--filter=blob:none", "--no-checkout"
@@ -208,13 +208,13 @@ else {
     }
 }
 
-if ($UpdateBeachEye -and $Commit -cne $remoteCommit) {
+if ($UpdateSource -and $Commit -cne $remoteCommit) {
     # Persist only after the exact checkout is ready. A failed lookup/download
     # leaves the prior pin intact; one build never follows a moving branch twice.
     $config.commit = $remoteCommit
     $manifest = ($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine
     [IO.File]::WriteAllText($configPath, $manifest, [Text.UTF8Encoding]::new($false))
-    Write-Host "Updated beacheye-source.json: $Commit -> $remoteCommit"
+    Write-Host "Updated $([IO.Path]::GetFileName($configPath)): $Commit -> $remoteCommit"
 }
 
 [PSCustomObject]@{
