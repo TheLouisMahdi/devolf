@@ -1,5 +1,7 @@
 [CmdletBinding()]
 param(
+    [ValidateSet("x64", "x86")]
+    [string]$Architecture = "x64",
     [ValidateNotNullOrEmpty()]
     [string]$Name = "DEVolf",
     [switch]$UpdateBeachEye,
@@ -11,18 +13,23 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$architecture = "x64"
+$pythonVersionRequired = if ($Architecture -eq "x86") { "3.8" } else { "3.11" }
+$pythonBitsRequired = if ($Architecture -eq "x86") { 32 } else { 64 }
+$venvName = if ($Architecture -eq "x86") { ".venv38-x86" } else { ".venv" }
 
 if ([System.IO.Path]::GetFileName($Name) -ne $Name) {
     throw "Name must be a file name, not a path: $Name"
 }
 
 $projectRoot = $PSScriptRoot
-$pythonVersionRequired = "3.11"
-$pythonBitsRequired = 64
-$venvName = ".venv"
 $python = if ([string]::IsNullOrWhiteSpace($PythonExecutable)) {
-    Join-Path $projectRoot "$venvName\Scripts\python.exe"
+    $venvPython = Join-Path $projectRoot "$venvName\Scripts\python.exe"
+    $cachedPython = Join-Path $env:LOCALAPPDATA "DEVolf/Toolchains/Python38-x86-embedded/python.exe"
+    if ($Architecture -eq "x86" -and -not (Test-Path -LiteralPath $venvPython) -and (Test-Path -LiteralPath $cachedPython)) {
+        $cachedPython
+    } else {
+        $venvPython
+    }
 }
 else {
     [System.IO.Path]::GetFullPath($PythonExecutable)
@@ -33,10 +40,10 @@ $testLots = Join-Path $projectRoot "code\test_lots"
 $icon = Join-Path $assets "wolfeye.ico"
 $nativeDirectory = Join-Path $projectRoot "code\native\beacheye"
 $nativeDll = Join-Path $nativeDirectory "wolfeye_beacheye.dll"
-$wolfEyeDll = Join-Path $nativeDirectory "wolfeye_core.dll"
 $requirements = Join-Path $projectRoot "requirements.txt"
 $dist = Join-Path $projectRoot "Dist"
 $work = Join-Path $projectRoot "build"
+$Name = "$Name-$Architecture"
 $output = Join-Path $dist "$Name.exe"
 $nativeBuildScript = Join-Path $projectRoot "build-native.ps1"
 
@@ -86,7 +93,7 @@ foreach ($requiredFile in @($entryPoint, $icon, $requirements, $nativeBuildScrip
 }
 
 if (-not (Test-Path -LiteralPath $python -PathType Leaf) -and [string]::IsNullOrWhiteSpace($PythonExecutable)) {
-    $launcherVersion = "-$pythonVersionRequired"
+    $launcherVersion = if ($Architecture -eq "x86") { "-$pythonVersionRequired-32" } else { "-$pythonVersionRequired" }
     py $launcherVersion -m venv (Join-Path $projectRoot $venvName)
     if ($LASTEXITCODE -ne 0) {
         throw "Python $pythonVersionRequired could not create the virtual environment."
@@ -106,6 +113,10 @@ if ($pythonVersion -ne $pythonVersionRequired -or [int]$pythonBits -ne $pythonBi
 }
 
 $nativeBuildArguments = @{}
+$nativeDirectory = Join-Path $projectRoot "build/native-$Architecture"
+New-Item -ItemType Directory -Path $nativeDirectory -Force | Out-Null
+$nativeDll = Join-Path $nativeDirectory "wolfeye_beacheye.dll"
+$nativeBuildArguments.Architecture = $Architecture
 $nativeBuildArguments.OutputDirectory = $nativeDirectory
 $nativeBuildArguments.UpdateBeachEye = $UpdateBeachEye
 $nativeBuildArguments.UpdateWolfEye = $UpdateWolfEye
@@ -114,8 +125,10 @@ $nativeBuildArguments.WolfEyeSourceDirectory = $WolfEyeSourceDirectory
 if (-not (Test-Path -LiteralPath $nativeDll -PathType Leaf)) {
     throw "Native BeachEye build did not produce: $nativeDll"
 }
-if (-not (Test-Path -LiteralPath $wolfEyeDll -PathType Leaf)) {
-    throw "Native WolfEye build did not produce: $wolfEyeDll"
+foreach ($library in @($nativeDll)) {
+    if ((Get-PeMachine $library) -ne $(if ($Architecture -eq "x86") { 0x014C } else { 0x8664 })) {
+        throw "Native DLL must be $Architecture`: $library"
+    }
 }
 
 if (Test-OutputLocked $output) {
@@ -179,8 +192,7 @@ raise SystemExit(0 if result.wasSuccessful() else 1)
         "--icon", $icon,
         "--add-data", "$assets;assets",
         "--add-data", "$testLots;test_lots",
-        "--add-binary", "$nativeDll;native/beacheye",
-        "--add-binary", "$wolfEyeDll;native/beacheye"
+        "--add-binary", "$nativeDll;native/beacheye"
     )
     $arguments += $entryPoint
     New-Item -ItemType Directory -Path $work -Force | Out-Null
@@ -221,7 +233,7 @@ finally {
 if (-not (Test-Path -LiteralPath $output -PathType Leaf)) {
     throw "Build finished without producing $output"
 }
-$expectedMachine = 0x8664
+$expectedMachine = if ($Architecture -eq "x86") { 0x014C } else { 0x8664 }
 $actualMachine = Get-PeMachine $output
 if ($actualMachine -ne $expectedMachine) {
     throw "Packaged EXE architecture mismatch: expected $architecture, PE machine 0x$($actualMachine.ToString('X4'))."

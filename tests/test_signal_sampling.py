@@ -1,5 +1,4 @@
-"""Company INFO sampling flag through the real DLL, service and signal viewer."""
-import ctypes as ct
+"""WolfEye Python decoding through BeachEye transport and the signal viewer."""
 import math
 import os
 import socket
@@ -39,25 +38,13 @@ def adc_payload(samples, cycles=1):
     return struct.pack(f"<{len(words)}H", *words)
 
 
-class NativeSignalSamplingTests(unittest.TestCase):
-    def test_company_cores_have_separate_versioned_abis(self):
-        self.assertEqual(beacheye._native().be_abi_version(), 12)
-        self.assertEqual(core._native().we_abi_version(), 1)
-        self.assertFalse(hasattr(beacheye._native(), "be_signal"))
-        self.assertFalse(hasattr(beacheye._native(), "be_tcc_trip_ms"))
+class SignalDecoderTests(unittest.TestCase):
+    def test_signal_and_adc_do_not_load_any_dll(self):
+        with patch("ctypes.CDLL", side_effect=OSError("wrong architecture or missing DLL")):
+            self.assertEqual(len(core.decode_signal(signal_payload(32), 32)[0]), 32)
+            self.assertEqual(len(core.decode_adc(adc_payload(64), 64)[0]), 64)
+        self.assertFalse(hasattr(core, "_native"))
         self.assertIs(beacheye.decode_signal, core.decode_signal)
-
-    def test_incompatible_wolfeye_core_is_rejected_before_any_algorithm(self):
-        core._native.cache_clear()
-        try:
-            with patch.object(core.ct, "CDLL") as loader:
-                loader.return_value.we_abi_version.return_value = 0
-                with self.assertRaisesRegex(ValueError, "WolfEye core ABI"):
-                    core._native()
-                loader.return_value.we_signal.assert_not_called()
-                loader.return_value.we_tcc_trip_ms.assert_not_called()
-        finally:
-            core._native.cache_clear()
 
     def test_both_signal_strides_preserve_every_channel_and_sample(self):
         for samples in (32, 64):
@@ -87,11 +74,6 @@ class NativeSignalSamplingTests(unittest.TestCase):
             if samples == 64:
                 with self.assertRaises(ValueError):
                     beacheye.decode_signal(signal_payload(32), samples)
-            # Exercise native validation independently of the Python boundary.
-            body = ct.create_string_buffer(signal_payload(samples))
-            out = (ct.c_float * (10 * samples))()
-            self.assertLess(core._native().we_signal(body, len(body) - 1, out, len(out) - 1, samples), 0)
-            self.assertLess(core._native().we_signal(body, len(body) - 2, out, len(out), samples), 0)
 
     def test_nonfinite_signal_rejected_and_finite_spikes_retained(self):
         for samples in (32, 64):
@@ -126,13 +108,10 @@ class NativeSignalSamplingTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 beacheye.decode_signal(b"", samples)
 
-    def test_adc_preserves_unsigned_counts_and_native_bounds(self):
+    def test_adc_preserves_unsigned_counts(self):
         for samples in (32, 64):
             body = struct.pack(f"<{10 * samples}H", *([65535] * (10 * samples)))
             self.assertEqual(beacheye.decode_adc(body, samples), [[65535.0] * samples for _ in range(10)])
-            source = ct.create_string_buffer(body)
-            output = (ct.c_float * (10 * samples))()
-            self.assertLess(core._native().we_adc(source, len(body), output, len(output) - 1, samples), 0)
 
     def test_service_accepts_padded_32_sample_response(self):
         service = DeviceService()

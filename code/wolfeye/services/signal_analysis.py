@@ -7,6 +7,17 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 
+from itertools import zip_longest
+
+
+def _strict_zip(left, right):
+    """Keep equal-length validation on Python 3.8 as well as newer runtimes."""
+    missing = object()
+    for a, b in zip_longest(left, right, fillvalue=missing):
+        if a is missing or b is missing:
+            raise ValueError("zip arguments have different lengths")
+        yield a, b
+
 class SignalAnalysisError(ValueError):
     pass
 
@@ -659,7 +670,7 @@ def _fit_phasor(
         [sum(row[i] * row[j] for row in rows) for j in range(3)] for i in range(3)
     ]
     vector = [
-        sum(row[index] * value for row, value in zip(rows, values, strict=True))
+        sum(row[index] * value for row, value in _strict_zip(rows, values))
         for index in range(3)
     ]
     solved = _solve(matrix, vector)
@@ -670,7 +681,7 @@ def _fit_phasor(
 
 
 def _solve(matrix: list[list[float]], vector: list[float]) -> list[float] | None:
-    augmented = [row[:] + [value] for row, value in zip(matrix, vector, strict=True)]
+    augmented = [row[:] + [value] for row, value in _strict_zip(matrix, vector)]
     size = len(augmented)
     for column in range(size):
         pivot = max(range(column, size), key=lambda row: abs(augmented[row][column]))
@@ -685,7 +696,7 @@ def _solve(matrix: list[list[float]], vector: list[float]) -> list[float] | None
             factor = augmented[row][column]
             augmented[row] = [
                 value - factor * base
-                for value, base in zip(augmented[row], augmented[column], strict=True)
+                for value, base in _strict_zip(augmented[row], augmented[column])
             ]
     return [augmented[index][-1] for index in range(size)]
 

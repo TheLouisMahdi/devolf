@@ -893,7 +893,7 @@ class SignalPage(QWidget):
         mapped = {
             name: values
             for name, values in zip(
-                SIGNAL_CHANNEL_NAMES, capture.channels, strict=False
+                SIGNAL_CHANNEL_NAMES, capture.channels
             )
             if values
         }

@@ -1,5 +1,7 @@
 [CmdletBinding()]
 param(
+    [ValidateSet("x64", "x86")]
+    [string]$Architecture = "x64",
     [switch]$UpdateBeachEye,
     [switch]$UpdateWolfEye,
     [string]$WolfEyeSourceDirectory,
@@ -17,29 +19,45 @@ $source = Join-Path $projectRoot "code\native\beacheye"
 $toolchainBin = if ($env:DEVOLF_GCC_BIN) {
     [System.IO.Path]::GetFullPath($env:DEVOLF_GCC_BIN)
 }
-elseif (Test-Path -LiteralPath "C:\msys64\ucrt64\bin\g++.exe" -PathType Leaf) {
+elseif ($Architecture -eq "x64" -and (Test-Path -LiteralPath "C:\msys64\ucrt64\bin\g++.exe" -PathType Leaf)) {
     "C:\msys64\ucrt64\bin"
+}
+elseif ($Architecture -eq "x86" -and (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA "DEVolf/Toolchains/mingw32/bin/g++.exe") -PathType Leaf)) {
+    Join-Path $env:LOCALAPPDATA "DEVolf/Toolchains/mingw32/bin"
+}
+elseif ($Architecture -eq "x86" -and (Test-Path -LiteralPath "C:\mingw32\bin\g++.exe" -PathType Leaf)) {
+    "C:\mingw32\bin"
 }
 else {
     $pathCompiler = Get-Command g++.exe -ErrorAction SilentlyContinue
     if ($null -eq $pathCompiler) {
-        throw "Missing x64 MinGW GCC. Install MSYS2 UCRT64 GCC/Ninja, set DEVOLF_GCC_BIN, or add its bin directory to PATH."
+        throw "Missing x86 MinGW GCC. Install an i686 POSIX/DWARF MSVCRT toolchain and set DEVOLF_GCC_BIN to its bin directory."
     }
     Split-Path $pathCompiler.Source -Parent
 }
 $gcc = Join-Path $toolchainBin "gcc.exe"
 $gxx = Join-Path $toolchainBin "g++.exe"
-$ninja = Join-Path $toolchainBin "ninja.exe"
+$ninjaCommand = Get-Command ninja.exe -ErrorAction SilentlyContinue
+$ninja = if (Test-Path -LiteralPath (Join-Path $toolchainBin 'ninja.exe')) {
+    Join-Path $toolchainBin 'ninja.exe'
+} elseif ($ninjaCommand) {
+    $ninjaCommand.Source
+} elseif (Test-Path -LiteralPath 'C:\msys64\ucrt64\bin\ninja.exe') {
+    'C:\msys64\ucrt64\bin\ninja.exe'
+} else {
+    throw "Missing Ninja. Install Ninja and add ninja.exe to PATH."
+}
 foreach ($tool in @($gcc, $gxx, $ninja)) {
     if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
-        throw "Missing GCC build tool: $tool. Install MSYS2 UCRT64 GCC/Ninja, set DEVOLF_GCC_BIN, or add its bin directory to PATH."
+        throw "Missing GCC build tool: $tool. Set DEVOLF_GCC_BIN to the i686 POSIX/DWARF MSVCRT toolchain bin directory."
     }
 }
 $target = (& $gxx -dumpmachine | Out-String).Trim()
-if ($LASTEXITCODE -ne 0 -or $target -ne "x86_64-w64-mingw32") {
-    throw "Expected x64 MinGW GCC (x86_64-w64-mingw32); found '$target'."
+$expectedTarget = if ($Architecture -eq "x86") { "i686-w64-mingw32" } else { "x86_64-w64-mingw32" }
+if ($LASTEXITCODE -ne 0 -or $target -ne $expectedTarget) {
+    throw "Expected $Architecture MinGW GCC ($expectedTarget); found '$target'."
 }
-$buildName = if ($WolfEyeSourceDirectory) { "native-wolfeye-development-gcc-x64" } else { "native-beacheye-dataprovider-gcc-x64" }
+$buildName = if ($WolfEyeSourceDirectory) { "native-beacheye-development-$Architecture" } else { "native-beacheye-$Architecture" }
 $build = Join-Path $projectRoot "build\$buildName"
 $output = Join-Path $build "wolfeye_beacheye.dll"
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
@@ -61,6 +79,7 @@ function Invoke-NativeBuild(
         "-DCMAKE_CXX_COMPILER=$gxx",
         "-DCMAKE_MAKE_PROGRAM=$ninja",
         "-DCMAKE_BUILD_TYPE=Release",
+        "-DDEVOLF_ARCHITECTURE=$Architecture",
         "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$BuildDirectory",
         "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=$BuildDirectory",
         "-DBEACHEYE_DIR=$BeachEyeDirectory",
@@ -71,7 +90,7 @@ function Invoke-NativeBuild(
     if ($LASTEXITCODE -ne 0) {
         throw "Native DataProvider configure failed with exit code $LASTEXITCODE."
     }
-    & cmake --build $BuildDirectory --config Release --clean-first --parallel
+    & cmake --build $BuildDirectory --config Release --parallel
     if ($LASTEXITCODE -ne 0) {
         throw "Native DataProvider build failed with exit code $LASTEXITCODE."
     }
@@ -88,7 +107,7 @@ if ($WolfEyeSourceDirectory) {
         throw "WolfEyeSourceDirectory must contain the company WolfEye source tree: $wolfPath"
     }
     $wolfSourceInfo = [PSCustomObject]@{ Path = $wolfPath }
-    Write-Warning "Development WolfEye source selected: $wolfPath. Local changes are compiled; this is not a pristine company release."
+    Write-Warning "Development WolfEye source selected: $wolfPath. Native support headers use this checkout; WolfEye algorithms are Python ports and are not compiled."
 }
 else {
     $wolfSourceInfo = & $resolver -Dependency WolfEye -UpdateSource:$UpdateWolfEye
@@ -114,7 +133,6 @@ try {
     }
     New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
     Copy-Item -LiteralPath $output -Destination $destination -Force
-    Copy-Item -LiteralPath (Join-Path $build 'wolfeye_core.dll') -Destination (Join-Path $OutputDirectory 'wolfeye_core.dll') -Force
     Write-Host "Built native DataProvider: $destination"
 
     # All reported device builds use the selected company source. Its Database

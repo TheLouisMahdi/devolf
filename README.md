@@ -9,13 +9,14 @@ scenarios, and creates FC22 inspection reports.
 
 ## Build
 
-Supported target: **Windows 10/11, x64**, with **Python 3.11 x64**.
+Build targets: **x64 (Python 3.11 / Qt6)** and **x86 (Python 3.8 / Qt5)**.
+The BeachEye DLL is compiled separately for each architecture.
 
 ### Requirements
 
-- Python 3.11 x64 and the `py` launcher.
+- Python 3.11 x64 for x64 builds; Python 3.8 x86 for x86 builds, plus the `py` launcher.
 - Git, [GitHub CLI](https://cli.github.com/) and CMake on `PATH`.
-- MSYS2 UCRT64 GCC and Ninja. In the MSYS2 UCRT64 terminal:
+- MSYS2 UCRT64 GCC for x64, i686 MinGW GCC for x86, and Ninja. In the MSYS2 UCRT64 terminal:
 
   ```sh
   pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-ninja
@@ -48,10 +49,21 @@ The switches update `beacheye-source.json` and `wolfeye-source.json` independent
 Omitting both repeats the recorded SHAs. See [guidebuild.txt](guidebuild.txt) for the
 English command reference, native-only builds and custom build options.
 
-**Output:** `Dist\DEVolf.exe`.
+**Outputs:** `Dist\DEVolf-x64.exe` and `Dist\DEVolf-x86.exe`.
 
-The script creates `.venv` when needed, installs `requirements.txt`, builds
-both company native DLLs, runs all tests in `tests`, packages one EXE and checks its startup.
+The default builds x64. To build x86:
+
+```powershell
+.\build.ps1 -Architecture x86
+```
+
+Use an i686 MinGW GCC toolchain for x86, selected by `DEVOLF_GCC_BIN`
+or `%LOCALAPPDATA%\DEVolf\Toolchains\mingw32\bin`.
+
+The script creates the selected environment when needed, installs the matching
+requirements, builds only BeachEye, runs all tests, packages the EXE and checks
+its architecture and startup. An existing runtime can be selected with
+`-PythonExecutable`.
 GCC/Ninja are selected explicitly. The default toolchain is
 `C:\msys64\ucrt64\bin`; use `DEVOLF_GCC_BIN` for a different installation.
 
@@ -118,14 +130,16 @@ Signals use the company's ten-channel structure with 32 or 64 samples per
 channel, selected by INFO flag `0x02`, at 1600 or 3200 Sa/s respectively.
 32-sample devices may return fixed-size buffers; only the INFO-selected
 prefix is plotted. See [signal decoding and diagnostics](docs/COMPANY_PARITY_AUDIT.md#signal-and-numeric-contracts).
-Get ADC uses the original company signal loader, one cycle at a time.
-BeachEye bridge ABI is **12**; WolfEye core ABI is **1**. Rebuild both DLLs
-and the EXE together. `wolfeye_core.dll` runs the company TCC calculator,
-AR stage rules and SIGNAL/ADC loader. Qt retains the existing appearance,
-signal analysis, capture history and standalone viewers. EmWolf is unchanged.
+Get ADC follows the company half-cycle channel layout in Python.
+BeachEye bridge ABI is **12**. BeachEye remains the only company DLL used
+at runtime. WolfEye SIGNAL/ADC decoding, TCC calculations and AR stage rules
+run directly in Python, ported from `wolfeye/master` at the recorded SHA.
+`wolfeye_core.dll` is no longer loaded, built or packaged. INFO still selects
+32 or 64 samples per cycle independently of the executable's architecture.
+Qt retains signal analysis, capture history and standalone viewers.
 
-For editable company sources and the development build command, see
-[the current architecture](docs/COMPANY_PARITY_AUDIT.md#current-architecture--2026-10-21).
+For source provenance and the direct Python ports, see
+[the current architecture](docs/COMPANY_PARITY_AUDIT.md#current-architecture---python-wolfeye--native-beacheye---2026-10-21).
 
 ## Features
 
@@ -142,8 +156,8 @@ For editable company sources and the development build command, see
 
 Settings use the company's original wire serializer and defaults. The Qt editor
 assigns typed `Configure` fields directly, like the company desktop, without
-passing through the mutating company JSON exporter. Original TCC calculation
-and AR stage rules are compiled from the pinned pristine WolfEye checkout.
+passing through the mutating company JSON exporter. TCC calculation
+and AR stage rules are direct Python ports of the pinned WolfEye master source.
 EmWolf, FC22 Tester and user analysis/report features remain unchanged.
 See [the current company-process audit](docs/COMPANY_PARITY_AUDIT.md) for source
 provenance, corrections and the explicit remaining differences. Sampling
@@ -185,12 +199,11 @@ code/main.py              Application entry point
 code/wolfeye/widgets/     Qt pages, dialogs and charts
 code/wolfeye/services/    Device, protocol, analysis and report services
 code/native/beacheye/     C ABI, active transport adapter and CMake build
-code/native/wolfeye/      Small C ABI for company WolfEye algorithms
 code/native/DataProvider/ Six required CRC/JSON/configuration files
 code/assets/             Branding, SVG controls and form templates
 tests/                   Regression tests
 docs/                    Mapping, audits, release and publication details
-build.ps1                Complete release build
+build.ps1                x64/x86 release build with -Architecture
 build-native.ps1         Pinned ver_50_remaster native build
 requirements.txt         Pinned Python dependencies
 build/                   Generated intermediates and logs

@@ -16,14 +16,14 @@ def configure_numeric_editor(widget: QSpinBox | QDoubleSpinBox, path: str) -> No
     if isinstance(widget, QSpinBox):
         widget.setRange(int(spec.minimum), int(spec.maximum))
     else:
-        widget.setRange(spec.minimum, spec.maximum)
+        widget.setRange(float(spec.minimum), float(spec.maximum))
     widget.setProperty("numericInteger", spec.decimals == 0)
     widget.setToolTip(f"{path}\nStored as {spec.storage}, scale {spec.scale}.\n"
                       f"Editable range: {spec.minimum:g} to {spec.maximum:g}")
 
 
 def set_numeric_value(widget: QSpinBox | QDoubleSpinBox, value: Any) -> None:
-    widget.setValue(value)
+    widget.setValue(float(value) if isinstance(widget, QDoubleSpinBox) else value)
     widget.setProperty("loadedNumericValue", value)
     widget.setProperty("loadedNumericDisplay", widget.value())
 

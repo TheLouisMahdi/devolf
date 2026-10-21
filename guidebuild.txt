@@ -1,118 +1,54 @@
-DEVolf - Complete Windows x64 Build Guide
-=========================================
+DEVolf build guide
+==================
 
-Requirements
-------------
-- Windows 10/11 x64 and Python 3.11 x64 (including the py launcher).
-- Git, GitHub CLI (gh) and CMake on PATH.
-- MSYS2 UCRT64 GCC and Ninja. In the MSYS2 UCRT64 terminal:
-  pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-ninja
-- Read access to BOTH private repositories: majidnow/BeachEye and majidnow/wolfeye.
+Targets
+-------
+x64: Python 3.11 x64, PySide6/Qt6, x86_64 MinGW GCC.
+x86: Python 3.8 x86, PySide2/Qt5, i686 MinGW GCC.
+Use a complete Python installation with pip and venv, or supply an existing
+runtime using -PythonExecutable. Git, GitHub CLI, CMake and Ninja are required.
 
-One-time setup, in PowerShell:
-  Set-Location 'C:\Users\poimu\Desktop\devolf'
-  gh auth login
-  gh auth status
-  gh repo view majidnow/BeachEye
-  gh repo view majidnow/wolfeye
+Authenticate once with gh auth login. Read access is required for the private
+majidnow/BeachEye and majidnow/wolfeye dependency checkouts. Company sources
+are cached outside the repository and are never published with DEVolf.
 
-Full build with BOTH company updates
------------------------------------
-Close running DEVolf instances first. Run only one build in this checkout.
+Build
+-----
+.\build.ps1 -Architecture x64
+.\build.ps1 -Architecture x86
 
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -UpdateBeachEye -UpdateWolfEye
+Outputs: Dist/DEVolf-x64.exe and Dist/DEVolf-x86.exe.
+A running output is preserved; the build prints an alternate file name.
+Dependencies, the BeachEye DLL, all tests, packaging, PE architecture and
+startup are checked separately for each target. WolfEye algorithms run in
+Python; wolfeye_core.dll is not built, loaded or packaged.
 
-This command:
-1. Resolves the latest BeachEye ver_50_remaster and WolfEye master commits.
-2. Prepares pristine external checkouts and records their exact SHAs in
-   beacheye-source.json and wolfeye-source.json.
-3. Creates/uses .venv with Python 3.11 x64 and installs requirements.txt.
-4. Compiles wolfeye_beacheye.dll and wolfeye_core.dll.
-5. Runs ALL tests under tests/ (including wire-contract tests).
-6. Packages one Windows x64 EXE containing Qt and both DLLs.
-7. Checks the EXE architecture and performs its startup smoke test.
+Update native support dependencies
+---------------------------------
+.\build.ps1 -Architecture x64 -UpdateBeachEye -UpdateWolfEye
+.\build-native.ps1 -Architecture x86 -UpdateBeachEye -UpdateWolfEye
 
-Output: Dist\DEVolf.exe. If it is in use, the script prints an alternate
--new or timestamped output name. Source, compile or test failures stop the
-build. A pin already resolved successfully remains recorded for diagnosis.
+Without update switches, recorded manifests are reused. WolfEye master ports
+are pinned to 7e58f4af439c6fa9c9db51e4558936264401732a; an algorithm update
+requires a reviewed Python port and parity tests. Updating support headers
+alone does not rewrite the Python algorithms.
 
-Repeat the recorded versions without branch updates:
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
+Toolchain selection
+-------------------
+DEVOLF_GCC_BIN selects the compiler directory and must match -Architecture.
+x64 defaults to C:/msys64/ucrt64/bin, then PATH.
+x86 checks %LOCALAPPDATA%/DEVolf/Toolchains/mingw32/bin and C:/mingw32/bin,
+then PATH. Ninja may be installed separately on PATH.
 
-Update one company dependency only:
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -UpdateBeachEye
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -UpdateWolfEye
+Advanced
+--------
+.\build.ps1 -Architecture x86 -PythonExecutable 'C:/Python38-32/python.exe'
+.\build.ps1 -Architecture x86 -Wheelhouse 'D:/Wheelhouse'
+.\build-native.ps1 -Architecture x64 -OutputDirectory 'D:/BuildOutput'
 
-Update DEVolf itself before building
------------------------------------
-  git status --short
-  git pull --ff-only origin release
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -UpdateBeachEye -UpdateWolfEye
-
-Preserve local work and intentional manifest changes before pulling. If Git
-reports local changes or divergence, resolve them without discarding work.
-Company update flags do not pull this DEVolf repository.
-
-Native libraries only
----------------------
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-native.ps1 -UpdateBeachEye -UpdateWolfEye
-
-Optional destination:
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-native.ps1 -UpdateBeachEye -UpdateWolfEye -OutputDirectory 'D:\DEVolf-native'
-
-Without OutputDirectory, both DLLs go to code\native\beacheye.
-Native-only builds do not run Python tests or create an EXE.
-
-Resolve company source only
----------------------------
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\resolve-beacheye-source.ps1 -Dependency BeachEye -UpdateSource
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\resolve-beacheye-source.ps1 -Dependency WolfEye -UpdateSource
-
-Omit -UpdateSource to resolve the recorded SHA. The old resolver switch
--UpdateBeachEye remains an alias for -UpdateSource for existing scripts.
-
-Editable WolfEye development
----------------------------
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -UpdateBeachEye -WolfEyeSourceDirectory 'C:\path\to\wolfeye'
-
-The folder contains company WolfEye/src and WolfEye/include. Edits to company
-TCC, AR and signal loading code are compiled into wolfeye_core.dll. This uses
-a separate CMake directory. Do not combine -UpdateWolfEye with a development
-source directory: choose remote master or your local edits. Release builds
-without this option use the recorded pristine source.
-
-Optional build settings
------------------------
-Use an existing Python 3.11 x64 runtime:
-  .\build.ps1 -UpdateBeachEye -UpdateWolfEye -PythonExecutable 'C:\Python311\python.exe'
-
-Custom EXE name:
-  .\build.ps1 -UpdateBeachEye -UpdateWolfEye -Name 'DEVolf-company'
-
-Offline Python wheels (company source/authentication still require GitHub):
-  .\build.ps1 -UpdateBeachEye -UpdateWolfEye -Wheelhouse 'D:\Wheelhouse'
-
-Custom toolchain and private cache for this PowerShell session:
-  $env:DEVOLF_GCC_BIN = 'D:\msys64\ucrt64\bin'
-  $env:DEVOLF_BEACHEYE_CACHE = 'D:\PrivateBuildCache\DEVolf-company'
-  .\build.ps1 -UpdateBeachEye -UpdateWolfEye
-
-Defaults: C:\msys64\ucrt64\bin and %LOCALAPPDATA%\DEVolf\BeachEye.
-Keep the private cache outside this repository.
-
-Tests without EXE packaging
----------------------------
-Build both native DLLs first, then:
-  $env:PYTHONPATH = (Resolve-Path .\code).Path
-  $env:WOLFEYE_NATIVE_DIR = (Resolve-Path .\code\native\beacheye).Path
-  $env:QT_QPA_PLATFORM = 'offscreen'
-  & '.\.venv\Scripts\python.exe' -m unittest discover -s tests -v
-
-Recorded source versions
-------------------------
-  Get-Content .\beacheye-source.json
-  Get-Content .\wolfeye-source.json
-
-Each update resolves its branch head once. Later company pushes do not change
-the source selected for that build. New incompatible company APIs still need
-integration work; the full build stops when validation fails.
+The standard environments are .venv (x64) and .venv38-x86 (x86). A prepared
+x86 embedded runtime at %LOCALAPPDATA%/DEVolf/Toolchains/Python38-x86-embedded
+can be used automatically when the x86 environment does not exist.
+Generated build/ and output/ folders may be deleted after a build. Keep
+sessions/, scenario JSON files, assets, tests and the external toolchain cache.
+32/64 signal samples per cycle is independent of the EXE architecture.

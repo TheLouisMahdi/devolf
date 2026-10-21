@@ -592,7 +592,6 @@ class MainWindow(QMainWindow):
         self.service.write_settings(self._raw_settings)
 
     def request_signal(self) -> None:
-        self._collect_config()
         self.service.request_signal()
 
     def on_signal(self, channels: list[list[float]]) -> None:

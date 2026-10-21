@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from wolfeye.qt import QApplication, QFont, QFontDatabase, QScrollArea
+from wolfeye.qt import QApplication, QFont, QFontDatabase, QScrollArea, IS_QT6
 from wolfeye.services.fc22_session import Fc22SessionStore
 from wolfeye.widgets.fc22_tester_page import Fc22TesterPage
 
@@ -15,7 +15,8 @@ class TesterLayoutTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
-        if not QFontDatabase.families() and Path("C:/Windows/Fonts/segoeui.ttf").exists():
+        families = QFontDatabase.families() if IS_QT6 else QFontDatabase().families()
+        if not families and Path("C:/Windows/Fonts/segoeui.ttf").exists():
             QFontDatabase.addApplicationFont("C:/Windows/Fonts/segoeui.ttf")
         cls.app.setFont(QFont("Segoe UI", 9))
 

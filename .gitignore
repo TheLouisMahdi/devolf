@@ -1,4 +1,5 @@
 .venv/
+.venv38-x86/
 .ruff_cache/
 .pytest_cache/
 __pycache__/

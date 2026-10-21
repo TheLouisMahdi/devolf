@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from PySide6.QtTest import QTest
+from wolfeye.qt import QEventLoop, QTimer
 from wolfeye.qt import QApplication, QMessageBox
 from wolfeye.models import DeviceInfo, MeasurementSnapshot
 from wolfeye.services.beacheye import decode_measurements, settings_point_catalog
@@ -24,6 +24,12 @@ def lot(source="external.charging_voltage", field="charging_voltage", **extra):
     return {"version": 1, "lot_id": "integration", "device_model": "FC22S",
             "tests": [{"id": "reading", "source": source, "report_field": field,
                        "filters": [{"type": "range", "min": 25, "max": 30}], **extra}]}
+
+
+def wait_events(milliseconds):
+    loop = QEventLoop()
+    QTimer.singleShot(milliseconds, loop.quit)
+    loop.exec()
 
 
 class LotIntegrationTests(unittest.TestCase):
@@ -147,11 +153,11 @@ class LotIntegrationTests(unittest.TestCase):
         rules = lot("emwolf.scenario_1.trip_time_ms", "fault_phase_phase", unit="ms")
         rules["tests"][0]["filters"].append({"type": "timeout", "seconds": 0.01})
         self.page._activate_lot(rules)
-        QTest.qWait(30)
+        wait_events(30)
         self.page._evaluate_lot({})
         self.assertEqual(self.page.session.test_results["fault_phase_phase"]["status"], "NOT_TESTED")
         self.page.on_emwolf_run_started("FC22S")
-        QTest.qWait(350)
+        wait_events(350)
         self.assertEqual(self.page.session.test_results["fault_phase_phase"]["status"], "FAIL")
 
     def test_live_readings_expire_and_disconnect_clears_pass(self):

@@ -1,11 +1,21 @@
-"""Qt 6 imports and shared UI helpers."""
+"""Qt imports for x64/PySide6 and x86/PySide2 builds."""
 
 from __future__ import annotations
 
-from PySide6 import QtCore, QtGui, QtWidgets
-
-QT_API = "PySide6"
-IS_QT6 = True
+try:
+    from PySide6 import QtCore, QtGui, QtWidgets
+    QT_API = "PySide6"
+    IS_QT6 = True
+except ImportError:
+    from PySide2 import QtCore, QtGui, QtWidgets
+    QT_API = "PySide2"
+    IS_QT6 = False
+    # Qt 5 exposes modal/application event loops as exec_().
+    for module in (QtCore, QtGui, QtWidgets):
+        for name in dir(module):
+            cls = getattr(module, name)
+            if isinstance(cls, type) and hasattr(cls, "exec_") and not hasattr(cls, "exec"):
+                setattr(cls, "exec", cls.exec_)
 
 
 def _symbol(name: str):

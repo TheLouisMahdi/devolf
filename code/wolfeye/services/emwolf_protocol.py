@@ -514,7 +514,7 @@ class EmWolfConnection:
             while not self._stop.is_set():
                 try:
                     received = connection.recv(4096)
-                except TimeoutError:
+                except socket.timeout:
                     continue
                 if not received:
                     break

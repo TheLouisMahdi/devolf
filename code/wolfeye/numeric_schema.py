@@ -83,7 +83,9 @@ def numeric_spec(path: str) -> NumericSpec | None:
         return None
     if not p.startswith("protection.groups.*."):
         return None
-    p = p.removeprefix("protection.groups.*.")
+    prefix = "protection.groups.*."
+    if p.startswith(prefix):
+        p = p[len(prefix):]
     if p.startswith("master.tcc_view."):
         name = p.rsplit(".", 1)[-1]
         return {
