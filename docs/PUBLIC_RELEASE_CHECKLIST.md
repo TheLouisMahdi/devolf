@@ -3,9 +3,12 @@
 ## Publication policy
 
 The DEVolf repository is intended to be public. All files in its clean tracked
-tree are approved for public read access. BeachEye is the only private component:
-its source, history, source patches, caches, and generated DLLs must never be
-committed or attached to a public DEVolf release.
+tree are approved for public read access. BeachEye and the company WolfEye
+source are authenticated private dependencies: their source, history, source
+patches, caches, and standalone generated DLLs must never be committed or
+attached to a public DEVolf release. Application releases contain the packaged
+DEVolf executable, checksums and build metadata; the executable bundles its
+required native runtime, as in previous releases.
 
 Public DEVolf users may clone and inspect the application. Building the native
 application requires a GitHub account with read access to the original private

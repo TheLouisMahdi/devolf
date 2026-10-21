@@ -26,6 +26,15 @@ class DeviceInfo:
     connected: bool = False
     transport: str = "Offline"
 
+    @property
+    def is_32_sampling(self) -> bool:
+        # Company DataProvider::InfoDeserialize reads INFO flag bit 1.
+        return bool(self.flags & 0x02)
+
+    @property
+    def signal_samples(self) -> int:
+        return 32 if self.is_32_sampling else 64
+
 
 @dataclass
 class MeasurementSnapshot:

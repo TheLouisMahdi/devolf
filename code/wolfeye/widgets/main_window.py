@@ -36,7 +36,6 @@ from wolfeye.qt import (
 from wolfeye.config_schema import default_config
 from wolfeye.models import DeviceInfo, MeasurementSnapshot
 from wolfeye.services.beacheye import (
-    SIGNAL_SAMPLE_RATE_HZ,
     decode_editor_file as decode_settings_file,
     decode_editor_payload as decode_settings_payload,
     default_settings_file,
@@ -49,6 +48,7 @@ from wolfeye.services.native_config import (
     update_config_from_native,
     update_native_from_config,
 )
+from wolfeye.services.wolfeye import SIGNAL_SAMPLE_RATE_HZ, SIGNAL_SAMPLES
 from wolfeye.services.device_service import DeviceService
 from wolfeye.styles import (
     V2_COMPACT_STYLE,
@@ -603,17 +603,21 @@ class MainWindow(QMainWindow):
             rated_frequency = float(frequency)
         except (TypeError, ValueError):
             rated_frequency = None
+        samples_per_cycle = len(channels[0]) if channels else self.service.info.signal_samples
         self.signal_page.set_samples(
             channels,
-            sample_rate_hz=SIGNAL_SAMPLE_RATE_HZ,
+            sample_rate_hz=SIGNAL_SAMPLE_RATE_HZ * samples_per_cycle / SIGNAL_SAMPLES,
             rated_frequency_hz=rated_frequency,
             config=self.config,
+            samples_per_cycle=samples_per_cycle,
         )
 
     def on_adc(self, channels: list[list[float]]) -> None:
         # Raw ADC counts have no calibrated physical units. Keep the user's
         # analysis code unchanged and do not label counts as amperes/volts.
-        self.signal_page.set_adc(channels)
+        self.signal_page.set_adc(
+            channels, SIGNAL_SAMPLE_RATE_HZ * self.service.info.signal_samples / SIGNAL_SAMPLES
+        )
 
     def on_raw_settings(self, payload: bytes) -> None:
         model = self.service.info.model or self._selected_model()

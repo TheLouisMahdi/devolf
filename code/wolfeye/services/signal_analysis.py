@@ -210,7 +210,7 @@ class SignalAnalyzer:
         rated_frequency_hz: float | None,
         config: dict[str, Any] | None = None,
         window_size: int = 64,
-        step_size: int = 32,
+        step_size: int = 64,
     ) -> tuple[MovingSignalAnalysis, ...]:
         if window_size < 4:
             raise SignalAnalysisError("Analysis window must contain at least 4 samples")

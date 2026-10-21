@@ -14,6 +14,7 @@ endif()
 set(DATAPROVIDER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../DataProvider" CACHE PATH "Company DataProvider source directory")
 set(BEACHEYE_DIR "" CACHE PATH "Authenticated private BeachEye source directory")
 set(WOLFEYE_DIR "" CACHE PATH "Authenticated private WolfEye source directory")
+option(WOLFEYE_REQUIRE_PRISTINE "Require an unmodified WolfEye checkout for release builds" ON)
 if(NOT BEACHEYE_DIR)
     message(FATAL_ERROR "BEACHEYE_DIR must point to the authenticated private dependency checkout.")
 endif()
@@ -37,7 +38,7 @@ execute_process(
     OUTPUT_VARIABLE WOLFEYE_STATUS
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
-if(NOT WOLFEYE_STATUS_RESULT EQUAL 0 OR NOT WOLFEYE_STATUS STREQUAL "")
+if(WOLFEYE_REQUIRE_PRISTINE AND (NOT WOLFEYE_STATUS_RESULT EQUAL 0 OR NOT WOLFEYE_STATUS STREQUAL ""))
     message(FATAL_ERROR "WolfEye must be an unmodified company Git checkout: ${WOLFEYE_DIR}")
 endif()
 
@@ -61,6 +62,10 @@ endforeach()
 # upstream. Include their exact source slice without editing the checkout or
 # keeping a second implementation in this repository.
 file(READ "${WOLFEYE_DIR}/WolfEye/src/SettingsView.cpp" COMPANY_SETTINGS_VIEW)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${WOLFEYE_DIR}/WolfEye/src/SettingsView.cpp"
+    "${WOLFEYE_DIR}/WolfEye/src/FaultViewer.cpp"
+)
 string(FIND "${COMPANY_SETTINGS_VIEW}" "#define L AR_MODE::AR_MODE_LOCK" STAGE_RULES_BEGIN)
 string(FIND "${COMPANY_SETTINGS_VIEW}" "const char* stage_mode_to_str" STAGE_RULES_END)
 if(STAGE_RULES_BEGIN LESS 0 OR STAGE_RULES_END LESS STAGE_RULES_BEGIN)
@@ -82,10 +87,7 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/company_signal_loader.inc" "${COMPANY_SI
 add_library(wolfeye_beacheye SHARED
     bridge.cpp
     data_provider_adapter.cpp
-    protection_adapter.cpp
     settings_editor.cpp
-    signal_adapter.cpp
-    "${WOLFEYE_DIR}/WolfEye/src/TCCCalculator.cpp"
     "${BEACHEYE_DIR}/src/Database.cpp"
     "${BEACHEYE_DIR}/src/Event.cpp"
     "${BEACHEYE_DIR}/src/MenuItemAttr.cpp"
@@ -94,6 +96,25 @@ add_library(wolfeye_beacheye SHARED
     "${DATAPROVIDER_DIR}/src/crc.c"
     "${DATAPROVIDER_DIR}/cJSON/cJSON.c"
 )
+
+# Company desktop algorithms have their own ABI. Qt keeps presentation and
+# user analysis, while BeachEye owns device data/settings and transport.
+add_library(wolfeye_core SHARED
+    ../wolfeye/bridge.cpp
+    "${WOLFEYE_DIR}/WolfEye/src/TCCCalculator.cpp"
+)
+target_compile_features(wolfeye_core PRIVATE cxx_std_17)
+target_include_directories(wolfeye_core PRIVATE
+    ../wolfeye "${CMAKE_CURRENT_BINARY_DIR}" "${BEACHEYE_DIR}/include"
+    "${WOLFEYE_DIR}/WolfEye/include" "${SER4CPP_INCLUDE_DIR}"
+    "${DATAPROVIDER_DIR}/include" "${DATAPROVIDER_DIR}/cJSON"
+)
+target_compile_definitions(wolfeye_core PRIVATE NOMINMAX REVISION=50)
+set_target_properties(wolfeye_core PROPERTIES PREFIX "" MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+if(MINGW)
+    target_link_options(wolfeye_core PRIVATE -static -static-libgcc -static-libstdc++)
+endif()
+install(TARGETS wolfeye_core RUNTIME DESTINATION .)
 target_compile_features(wolfeye_beacheye PRIVATE cxx_std_17)
 target_include_directories(wolfeye_beacheye PRIVATE
     .

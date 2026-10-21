@@ -137,3 +137,12 @@ It may differ from a head pushed by the company later during your build.
 The repository and branch stay fixed for AR/sectionalizer and all builds.
 Updating source does not automatically add UI or wire support for new company
 features; incompatible upstream changes need review when checks fail.
+WolfEye company algorithms are built as wolfeye_core.dll, alongside the
+BeachEye DLL. The application build packages both libraries.
+For an editable company checkout, use:
+  .\build.ps1 -WolfEyeSourceDirectory "C:\path\to\wolfeye"
+or native-only:
+  .\build-native.ps1 -WolfEyeSourceDirectory "C:\path\to\wolfeye"
+The folder must contain WolfEye/src and WolfEye/include from company master.
+Omit the option for the recorded pristine release sources. Development
+sources use a separate build directory and do not change either source pin.

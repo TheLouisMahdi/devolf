@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$UpdateBeachEye,
+    [string]$WolfEyeSourceDirectory,
     [string]$OutputDirectory
 )
 
@@ -34,7 +35,8 @@ $target = (& $gxx -dumpmachine | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $target -ne "x86_64-w64-mingw32") {
     throw "Expected x64 MinGW GCC (x86_64-w64-mingw32); found '$target'."
 }
-$build = Join-Path $projectRoot "build\native-beacheye-dataprovider-gcc-x64"
+$buildName = if ($WolfEyeSourceDirectory) { "native-wolfeye-development-gcc-x64" } else { "native-beacheye-dataprovider-gcc-x64" }
+$build = Join-Path $projectRoot "build\$buildName"
 $output = Join-Path $build "wolfeye_beacheye.dll"
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = $source
@@ -59,6 +61,7 @@ function Invoke-NativeBuild(
         "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=$BuildDirectory",
         "-DBEACHEYE_DIR=$BeachEyeDirectory",
         "-DWOLFEYE_DIR=$WolfEyeDirectory"
+        "-DWOLFEYE_REQUIRE_PRISTINE=$(if ($WolfEyeSourceDirectory) { 'OFF' } else { 'ON' })"
     )
     & cmake @configureArguments
     if ($LASTEXITCODE -ne 0) {
@@ -75,7 +78,18 @@ if ($null -eq $sourceInfo -or -not (Test-Path -LiteralPath $sourceInfo.Path -Pat
     throw "BeachEye source resolution did not return a valid directory."
 }
 
-$wolfSourceInfo = & $resolver -Dependency WolfEye
+if ($WolfEyeSourceDirectory) {
+    $wolfPath = (Resolve-Path -LiteralPath $WolfEyeSourceDirectory).Path
+    if (-not (Test-Path -LiteralPath (Join-Path $wolfPath 'WolfEye/src/FaultViewer.cpp'))) {
+        throw "WolfEyeSourceDirectory must contain the company WolfEye source tree: $wolfPath"
+    }
+    $wolfSourceInfo = [PSCustomObject]@{ Path = $wolfPath }
+    Write-Warning "Development WolfEye source selected: $wolfPath. Local changes are compiled; this is not a pristine company release."
+}
+else {
+    $wolfSourceInfo = & $resolver -Dependency WolfEye
+}
+Write-Host "WolfEye source: $($wolfSourceInfo.Path)"
 
 Write-Host "Building BeachEye branch '$($sourceInfo.Branch)' from $($sourceInfo.SourceKind)."
 Write-Host "BeachEye source: $($sourceInfo.Path)"
@@ -90,11 +104,12 @@ try {
         throw "BeachEye checkout changed during compilation; refusing to install the DLL."
     }
     $wolfStatus = & git -C $wolfSourceInfo.Path status --porcelain --untracked-files=all
-    if ($LASTEXITCODE -ne 0 -or -not [string]::IsNullOrWhiteSpace(($wolfStatus -join ""))) {
+    if (-not $WolfEyeSourceDirectory -and ($LASTEXITCODE -ne 0 -or -not [string]::IsNullOrWhiteSpace(($wolfStatus -join "")))) {
         throw "WolfEye company checkout changed during compilation."
     }
     New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
     Copy-Item -LiteralPath $output -Destination $destination -Force
+    Copy-Item -LiteralPath (Join-Path $build 'wolfeye_core.dll') -Destination (Join-Path $OutputDirectory 'wolfeye_core.dll') -Force
     Write-Host "Built native DataProvider: $destination"
 
     # All reported device builds use the selected company source. Its Database

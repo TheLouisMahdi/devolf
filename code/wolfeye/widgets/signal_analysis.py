@@ -136,7 +136,8 @@ class SignalAnalysisWindow(QDialog):
         self.window_selector.setMinimumWidth(420)
         self.window_selector.currentIndexChanged.connect(self._show_selected_window)
         window_row.addWidget(self.window_selector)
-        window_row.addWidget(QLabel("64 samples · 32-sample step · 50% overlap"))
+        self.window_description = QLabel()
+        window_row.addWidget(self.window_description)
         window_row.addStretch()
         root.addLayout(window_row)
         self.moving_results: tuple[MovingSignalAnalysis, ...] = ()
@@ -188,6 +189,13 @@ class SignalAnalysisWindow(QDialog):
         fault_sample_index: int | None = None,
     ) -> None:
         self.moving_results = results
+        if results:
+            size = results[0].end_sample - results[0].start_sample
+            step = results[1].start_sample - results[0].start_sample if len(results) > 1 else size
+            overlap = "no overlap" if step >= size else f"{100 * (size - step) / size:g}% overlap"
+            self.window_description.setText(f"{size} samples · {step}-sample step · {overlap}")
+        else:
+            self.window_description.clear()
         self.window_selector.blockSignals(True)
         self.window_selector.clear()
         for index, window in enumerate(results):

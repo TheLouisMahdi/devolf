@@ -3,6 +3,7 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$Name = "DEVolf",
     [switch]$UpdateBeachEye,
+    [string]$WolfEyeSourceDirectory,
     [string]$PythonExecutable,
     [string]$Wheelhouse
 )
@@ -31,6 +32,7 @@ $testLots = Join-Path $projectRoot "code\test_lots"
 $icon = Join-Path $assets "wolfeye.ico"
 $nativeDirectory = Join-Path $projectRoot "code\native\beacheye"
 $nativeDll = Join-Path $nativeDirectory "wolfeye_beacheye.dll"
+$wolfEyeDll = Join-Path $nativeDirectory "wolfeye_core.dll"
 $requirements = Join-Path $projectRoot "requirements.txt"
 $dist = Join-Path $projectRoot "Dist"
 $work = Join-Path $projectRoot "build"
@@ -105,9 +107,13 @@ if ($pythonVersion -ne $pythonVersionRequired -or [int]$pythonBits -ne $pythonBi
 $nativeBuildArguments = @{}
 $nativeBuildArguments.OutputDirectory = $nativeDirectory
 $nativeBuildArguments.UpdateBeachEye = $UpdateBeachEye
+$nativeBuildArguments.WolfEyeSourceDirectory = $WolfEyeSourceDirectory
 & $nativeBuildScript @nativeBuildArguments
 if (-not (Test-Path -LiteralPath $nativeDll -PathType Leaf)) {
     throw "Native BeachEye build did not produce: $nativeDll"
+}
+if (-not (Test-Path -LiteralPath $wolfEyeDll -PathType Leaf)) {
+    throw "Native WolfEye build did not produce: $wolfEyeDll"
 }
 
 if (Test-OutputLocked $output) {
@@ -171,7 +177,8 @@ raise SystemExit(0 if result.wasSuccessful() else 1)
         "--icon", $icon,
         "--add-data", "$assets;assets",
         "--add-data", "$testLots;test_lots",
-        "--add-binary", "$nativeDll;native/beacheye"
+        "--add-binary", "$nativeDll;native/beacheye",
+        "--add-binary", "$wolfEyeDll;native/beacheye"
     )
     $arguments += $entryPoint
     New-Item -ItemType Directory -Path $work -Force | Out-Null

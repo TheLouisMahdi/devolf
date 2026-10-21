@@ -1,5 +1,32 @@
 # Upstream synchronization manifest
 
+The [2026-10-21 SIGNAL/ADC audit](SIGNAL_ADC_PARITY_2026-10-21.md) documents
+the fixed-size 32-sample response correction and current source comparison.
+
+## Current source policy (2026-10-20)
+
+The current audit is [COMPANY_PARITY_AUDIT.md](COMPANY_PARITY_AUDIT.md).
+It supersedes the dated claims below. User additions, especially EmWolf and
+FC22 Tester, are protected from replacement. Company sources are resolved
+from pristine external checkouts: BeachEye `ver_50_remaster` at
+`bee19ba2851658f03601375aec458a21633055bb` and WolfEye `master` at
+`7e58f4af439c6fa9c9db51e4558936264401732a`. No company-source rewrites run.
+
+Current architecture: BeachEye ABI **12** and independent WolfEye core ABI **1**;
+see [editable sources and boundaries](COMPANY_PARITY_AUDIT.md#current-architecture--2026-10-21).
+INFO flag `0x02` selects 32 samples/channel at 1600 Sa/s;
+otherwise SIGNAL uses 64 at 3200 Sa/s. Signal decoding, ADC loading, capture
+history and analysis windows retain that selected profile. ADC calls the
+unchanged company loader once per cycle to avoid its fixed multi-cycle stride
+and overwrite. Regression tests are in `tests/test_signal_sampling.py`.
+Settings UI values bind directly to typed Configure
+members, matching the company desktop, before the unmodified Settings wire
+serializer runs. The company's original JSON API is also compiled unchanged.
+TCC calculation and AR stage transitions execute the original WolfEye code.
+Raw ADC uses its original signal loader. Legacy TCP/HTTP and fallback remain
+removed. Read the audit's explicit limitations
+before interpreting any older reference to complete parity.
+
 This branch was reconciled on 2026-10-12 against these immutable company
 revisions:
 
@@ -25,6 +52,7 @@ public repository tree.
 | `6c27d58` | Analog-value view correction | Existing native dereference/value decoding path | Revision measurement tests |
 | `6968c28` | Robust event deserialization | Native event stream decoder plus invalid-timestamp filtering | Tail-tolerance and event tests |
 | `989f9ff` | Min/max current curve plotting | TCC schema, settings bridge, editor, and chart | Fast-trip limit binding and round-trip tests |
+| `ac23c30`, `7e58f4a` | INFO sampling flag and runtime 32/64 channel stride | DeviceInfo, native signal/ADC bridge, Signal Viewer and analysis | Real-DLL sampling, service and mixed-history UI regression tests |
 
 ## BeachEye commit map
 
@@ -469,9 +497,9 @@ without overwhelming the setup/build guide.
 
 | File | Responsibility |
 | --- | --- |
-| `code/wolfeye/services/device_service.py` | Owns relay communication, native-first/legacy fallback, frame sequencing, live reads, settings operations, reset, and firmware/bootloader transfers. |
+| `code/wolfeye/services/device_service.py` | Owns relay communication, BeachEye-only TCP, frame sequencing, live reads, settings operations, reset, and firmware/bootloader transfers. |
 | `code/wolfeye/services/beacheye.py` | Loads the native DLL through `ctypes` and exposes device-info, measurement, event, signal, frame, and settings encode/decode operations to Python. |
-| `code/wolfeye/services/native_config.py` | Converts between the normalized UI configuration and the company native settings JSON while preserving unsupported or untouched fields. |
+| `code/wolfeye/services/native_config.py` | Converts between the normalized UI configuration and the company native settings JSON without synthesizing additional native fields. |
 | `code/wolfeye/services/signal_analysis.py` | Calculates fitted phasors, RMS values, frequency, harmonics, symmetrical sequences, power quality, directional quantities, and protection indications. |
 | `code/wolfeye/services/emwolf_protocol.py` | Defines EmWolf projects, setups, scenarios, analog outputs, EWS2 frame encoding/decoding, CRC, debouncing, SSH startup, and TCP connection handling. |
 | `code/wolfeye/services/emwolf_report.py` | Collects EmWolf execution results and generates branded PDF test reports. |
@@ -489,7 +517,8 @@ without overwhelming the setup/build guide.
 
 | Path | Responsibility |
 | --- | --- |
-| `code/native/beacheye/CMakeLists.txt` | Defines the single company native DLL build, required sources and runtime linkage. |
+| `code/native/beacheye/CMakeLists.txt` | Builds both BeachEye and WolfEye core DLLs, required sources and runtime linkage. |
+| `code/native/wolfeye/bridge.cpp`, `bridge.h`, `code/wolfeye/services/wolfeye.py` | WolfEye native ABI and ctypes boundary; TCC, AR and signal loading run from company sources. |
 | `code/native/beacheye/bridge.cpp`, `bridge.h` | Stable exported C ABI used by Python for decode, encode, settings, and provider operations. |
 | `code/native/beacheye/data_provider_adapter.cpp`, `data_provider_adapter.h` | Adapts the company `DataProvider` callbacks and transport behavior to the exported bridge API. |
 | `code/native/beacheye/compat/` | Minimal compatibility headers required by the native company sources. |
@@ -518,7 +547,7 @@ builds select a point map inside the same company source, not another DLL.
 
 | File | Coverage |
 | --- | --- |
-| `tests/test_device_service.py` | Native/legacy connection selection, fallback, request routing, write status, and update operations. |
+| `tests/test_device_service.py` | BeachEye connection, request routing, write status, and update operations. |
 | `tests/test_build_source.py` | Source-pin/update selection, single branch lookup and manifest preservation on failed resolution/compatibility checks. |
 | `tests/test_native_bridge.py` | Native ABI, exact settings round trips, revision-specific measurement/event profiles, framing, and provider behavior. |
 | `tests/test_emwolf_protocol.py` | CRC, frames, scenarios, projects, debouncing, connection shutdown, and command construction. |

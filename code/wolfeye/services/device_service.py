@@ -23,11 +23,11 @@ from wolfeye.services.beacheye import (
     decode_events,
     decode_info,
     decode_measurements,
-    decode_signal,
-    decode_adc,
     normalize_device_model,
     normalize_device_revision,
 )
+
+from wolfeye.services.wolfeye import decode_signal, decode_adc
 
 WOLFEYE_PORT = 6536
 FRAME_MEASUREMENTS = 0x02
@@ -323,6 +323,7 @@ class DeviceService(QObject):
         if command in EVENT_COMMANDS:
             self._handle_event_response(command, _frame_type, payload)
             return
+        diagnostic = ""
         try:
             if command == "info":
                 info = decode_info(payload)
@@ -367,11 +368,13 @@ class DeviceService(QObject):
                     "info" if status == STATUS_NO_NEED_UPLOAD else "success",
                 )
             elif command == "signal":
-                self.signal_received.emit(decode_signal(payload))
-                self.message.emit("WolfEye signal loaded.", "success")
+                diagnostic = self._save_signal_diagnostic(payload)
+                self.signal_received.emit(decode_signal(payload, self.info.signal_samples))
+                self.message.emit(f"WolfEye signal loaded.{diagnostic}", "success")
             elif command == "adc":
-                self.adc_received.emit(decode_adc(payload))
-                self.message.emit("WolfEye raw ADC loaded.", "success")
+                diagnostic = self._save_signal_diagnostic(payload, "adc")
+                self.adc_received.emit(decode_adc(payload, self.info.signal_samples))
+                self.message.emit(f"WolfEye raw ADC loaded.{diagnostic}", "success")
             elif command == "reset":
                 self.message.emit(
                     "RESET accepted; reconnect after the device restarts.", "success"
@@ -380,7 +383,7 @@ class DeviceService(QObject):
         except ValueError as exc:
             if command == "info" and self._fail_handshake(f"invalid device info response: {exc}"):
                 return
-            self.message.emit(f"WolfEye {command} decode failed: {exc}", "error")
+            self.message.emit(f"WolfEye {command} decode failed: {exc}{diagnostic}", "error")
 
     @staticmethod
     def _update_kind(kind: int) -> str:
@@ -425,6 +428,30 @@ class DeviceService(QObject):
             except ValueError as exc:
                 diagnostic = self._save_event_diagnostic(command, frame_type, payload, str(exc))
                 self._retry_event_download(command, f"{self.info.model} build {self.info.build}: {exc}{diagnostic}")
+
+    def _save_signal_diagnostic(self, payload: bytes, command: str = "signal") -> str:
+        """Keep exact user-requested SIGNAL/ADC bodies for firmware comparison."""
+        try:
+            directory = Path(os.environ.get("LOCALAPPDATA") or str(Path.home())) / "DEVolf" / "diagnostics"
+            directory.mkdir(parents=True, exist_ok=True)
+            capture = directory / f"{command}-response.bin"
+            capture.write_bytes(payload)
+            capture.with_suffix(".json").write_text(json.dumps({
+                "captured_at": datetime.now(timezone.utc).isoformat(),
+                "model": self.info.model, "build": self.info.build,
+                "firmware": self.info.firmware, "hardware": self.info.hardware,
+                "command": command, "frame_type": FRAME_ADC if command == "adc" else FRAME_SIGNAL,
+                "payload_bytes": len(payload),
+                "info_flags": self.info.flags,
+                "sample_count_expected": self.info.signal_samples,
+                "sample_rate_hz_expected": self.info.signal_samples * 50,
+                "channel_order": ["Ia", "Ib", "Ic", "In", "Va", "Vb", "Vc", "Vr", "Vs", "Vt"],
+                "data_type": "little-endian uint16, half-cycle voltage/current blocks" if command == "adc"
+                             else "little-endian float32, channel-major; only the INFO-selected prefix is plotted",
+            }, indent=2), encoding="utf-8")
+            return f" Raw response saved to {capture}"
+        except OSError as exc:
+            return f" Diagnostic save failed: {exc}"
 
     def _save_event_diagnostic(self, command: str, frame_type: int, data: bytes, error: str) -> str:
         try:

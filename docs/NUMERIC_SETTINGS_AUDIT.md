@@ -1,5 +1,12 @@
 # Numeric settings alignment
 
+> Current update (2026-10-17): company-source transformations remain removed.
+> The active editor now assigns typed Configure fields directly, matching the
+> company desktop's disabled VALIDATE macro, then uses the original serializer.
+> The unchanged company JSON API retains its own validation/default behavior
+> but is no longer the active UI marshalling path. See [the current process
+> audit](COMPANY_PARITY_AUDIT.md), especially desktop-only fields and wire limits.
+
 Reference: company WolfEye **master**, commit
 `989f9fffe4b58bce5b98213de945625780addcda`, inspected on 2026-10-13.
 The company source was inspected in an external private cache.

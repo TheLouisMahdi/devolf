@@ -1,5 +1,71 @@
 # Release-ready branch
 
+## DEVolf 0.2 — native WolfEye core and signal fixes (2026-10-21)
+
+- Separate WolfEye company algorithms into `wolfeye_core.dll` (ABI 1), with
+  BeachEye device/settings integration in `wolfeye_beacheye.dll` (ABI 12).
+  Both libraries are bundled in the Windows x64 executable.
+- Execute the original company TCC calculator, pure AR stage transitions and
+  SIGNAL/ADC loader from pinned WolfEye master `7e58f4a`. BeachEye remains
+  pinned to `bee19ba` on `ver_50_remaster`.
+- Support INFO-selected 32/64 samples, including fixed 2560/3072-byte buffers
+  from 32-sample devices. Keep all ADC cycles and use the correct time axis.
+- Save separate raw SIGNAL/ADC diagnostics for hardware investigation.
+- Preserve the Qt appearance, existing EmWolf/EWS2 source and user signal
+  analysis, history, navigation and standalone viewers.
+- Add `-WolfEyeSourceDirectory` for editable company-source development, with
+  a separate build directory and unchanged release pins.
+- Include the existing FC22AR scenario and documentation updates in this tree.
+- Validation: 181 project tests and five additional wire-contract tests passed;
+  the packaged executable passed startup and both embedded DLL hash checks.
+  Physical relay validation and complete line-by-line parity with master are
+  not claimed. The transport remains the existing native adapter.
+
+The dated entries below describe earlier builds and their earlier ABI versions.
+
+## Company 32/64 signal sampling (2026-10-20)
+
+- Pin WolfEye master to `7e58f4af439c6fa9c9db51e4558936264401732a`.
+  BeachEye remains at the already selected `bee19ba2851658f03601375aec458a21633055bb`.
+- Read INFO flag `0x02` as the company's 32-sample mode; clear means 64.
+  Decode SIGNAL/ADC using that stride, with 1600/3200 Sa/s for calibrated signals.
+- Keep each capture's cycle size for history, plot timing, fault origin and
+  analysis windows. Existing analysis calculations and nonoverlapping steps remain.
+- Invoke the unchanged company ADC loader per cycle so multiple cycles are
+  retained without the upstream compile-time stride or first-cycle overwrite.
+- Bridge ABI **11** rejects older DLLs. Rebuild DLL and EXE together.
+  Cover both models, flag transitions, all channels, malformed payloads, ADC
+  cycles and mixed capture history in `tests/test_signal_sampling.py`.
+  Hardware verification still requires a connected relay.
+- Verification: all **174** root tests passed in **96.206 seconds**, plus all
+  **5** existing `code/tests` signal tests. `build.ps1` rebuilt the x64 native
+  DLL and `Dist/DEVolf.exe`; the packaged Qt startup smoke test passed.
+
+## Company core process audit (2026-10-17)
+
+- Preserve EmWolf, FC22 Tester and the user's analysis/report integrations.
+- Pin pristine WolfEye master alongside pristine BeachEye; bridge ABI **10**.
+- Execute original company TCC calculation, AR stage rules and raw ADC loader.
+- Bind settings directly to Configure so JSON export cannot clamp or omit UI values.
+- Display company DNP3 measurement indices and advance transport sequence only
+  after a valid matching response; resend CRC failures with the same sequence.
+- Document remaining adapter/UI differences in [the parity audit](COMPANY_PARITY_AUDIT.md).
+  No new test methods were added.
+
+## Unmodified company DLL and transport cleanup (2026-10-17)
+
+- Removed Legacy TCP, Legacy HTTP, discovery and automatic fallback from both
+  the application and the native provider. Relay requests always use BeachEye's
+  sequenced protocol. Failed INFO handshakes are reported and closed.
+- Removed all company-source rewrites from dependency resolution. A separate
+  pristine checkout of `majidnow/BeachEye` `ver_50_remaster` is required and
+  checked before and after compilation.
+- Removed custom legacy settings, measurement, event and signal interpretations,
+  extra settings JSON fields and byte-difference patching. Settings JSON and
+  wire bytes now use the unmodified company implementation.
+- Bridge ABI is **9**; rebuild the DLL and EXE together. Earlier entries below
+  document superseded behavior. No new tests were added.
+
 ## Remove extra frame and measurement restrictions (2026-10-15)
 
 - General frame creation and queued requests no longer reject data at the

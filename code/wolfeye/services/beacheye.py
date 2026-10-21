@@ -15,11 +15,11 @@ from wolfeye.models import EventRecord, MeasurementSnapshot
 M_TYPE_BI = 0x01
 M_TYPE_AI = 0x02
 M_TYPE_BC = 0x04
-SIGNAL_CHANNELS = 10
-SIGNAL_SAMPLES = 64
-SIGNAL_SAMPLE_INTERVAL_S = 0.0003125
-SIGNAL_SAMPLE_RATE_HZ = 1.0 / SIGNAL_SAMPLE_INTERVAL_S
-SIGNAL_CHANNEL_NAMES = ("Ia", "Ib", "Ic", "In", "Va", "Vb", "Vc", "Vr", "Vs", "Vt")
+from wolfeye.services.wolfeye import (
+    SIGNAL_CHANNELS, SIGNAL_SAMPLES, SIGNAL_PAYLOAD_BYTES, SIGNAL_STRUCT_BYTES,
+    SIGNAL_SAMPLE_INTERVAL_S, SIGNAL_SAMPLE_RATE_HZ, SIGNAL_CHANNEL_NAMES,
+    cycle_ar_stage, calculate_tcc_trip_ms, decode_signal, decode_adc,
+)
 EVENT_TIMEZONE_OFFSET_MS = 12_600_000
 PROVIDER_CONNECTED = 1
 PROVIDER_DISCONNECTED = 2
@@ -92,24 +92,14 @@ def _native() -> ct.CDLL:
         library = ct.CDLL(str(path))
         library.be_abi_version.argtypes = []
         library.be_abi_version.restype = ct.c_uint32
-        if library.be_abi_version() != 10:
+        if library.be_abi_version() != 12:
             raise ValueError(
                 "Unsupported BeachEye bridge ABI; rebuild wolfeye_beacheye.dll"
             )
-        library.be_tcc_trip_ms.argtypes = [
-            ct.c_uint32, ct.c_uint16, ct.c_float, ct.c_uint32,
-            ct.c_uint32, ct.c_uint32, ct.c_uint32, ct.c_uint16,
-            ct.POINTER(ct.c_uint32),
-        ]
-        library.be_tcc_trip_ms.restype = ct.c_int
-        library.be_ar_cycle.argtypes = [ct.POINTER(ct.c_uint8), ct.POINTER(ct.c_uint8), ct.c_uint32, ct.c_uint32, ct.c_uint32]
-        library.be_ar_cycle.restype = ct.c_int
         for name, output in (
             ("info", _Info),
             ("measurements", _Point),
             ("events", _Event),
-            ("signal", ct.c_float),
-            ("adc", ct.c_float),
         ):
             function = getattr(library, f"be_{name}")
             function.argtypes = [ct.c_void_p, ct.c_size_t, ct.POINTER(output)]
@@ -242,31 +232,6 @@ def _native() -> ct.CDLL:
             f"Cannot load BeachEye C++ bridge: {path}. Build the DLL for this Python architecture. {exc}"
         ) from exc
     return library
-
-
-def cycle_ar_stage(modes: list[int], disabled: list[bool], row: int, stage: int, sef: bool) -> tuple[list[int], list[bool]]:
-    count = 4 if sef else 12
-    if len(modes) != count or len(disabled) != count:
-        raise ValueError("Invalid AR stage pack")
-    values = (ct.c_uint8 * count)(*modes)
-    blocked = (ct.c_uint8 * count)(*disabled)
-    if _native().be_ar_cycle(values, blocked, row, stage, sef) < 0:
-        raise ValueError("Invalid AR stage transition")
-    return list(values), [bool(value) for value in blocked]
-
-
-def calculate_tcc_trip_ms(
-    curve_type: int, pickup: int, multiplier: float, minimum: int,
-    maximum: int, adder: int, definite_time: int, current: int,
-) -> int | None:
-    if any(not 0 <= value <= 0xFFFFFFFF for value in (minimum, maximum, adder, definite_time)):
-        return None
-    result = ct.c_uint32()
-    status = _native().be_tcc_trip_ms(
-        curve_type, pickup, multiplier, minimum, maximum, adder,
-        definite_time, current, ct.byref(result),
-    )
-    return result.value if status == 0 else None
 
 
 class NativeDataProvider:
@@ -484,22 +449,6 @@ def decode_events(
     if count and not records and invalid_timestamps:
         raise ValueError("BeachEye event response contains no valid timestamps")
     return records
-
-
-def decode_signal(payload: bytes) -> list[list[float]]:
-    values = (ct.c_float * (SIGNAL_CHANNELS * SIGNAL_SAMPLES))()
-    _decode("signal", payload, values, len(values))
-    return [
-        list(values[i * SIGNAL_SAMPLES : (i + 1) * SIGNAL_SAMPLES])
-        for i in range(SIGNAL_CHANNELS)
-    ]
-
-
-def decode_adc(payload: bytes) -> list[list[float]]:
-    values = (ct.c_float * max(1, len(payload) // 2))()
-    count = _decode("adc", payload, values, len(values))
-    samples = count // SIGNAL_CHANNELS
-    return [list(values[i * samples:(i + 1) * samples]) for i in range(SIGNAL_CHANNELS)]
 
 
 def build_native_frame(frame_type: int, payload: bytes = b"") -> bytes:

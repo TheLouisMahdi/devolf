@@ -27,7 +27,8 @@ from wolfeye.qt import (
 )
 
 from wolfeye.config_schema import AR_MODES, BAUD_RATES, BINARY_POINT_NAMES, TCC_TYPES
-from wolfeye.services.beacheye import settings_point_catalog, cycle_ar_stage
+from wolfeye.services.beacheye import settings_point_catalog
+from wolfeye.services.wolfeye import cycle_ar_stage
 from wolfeye.numeric_schema import numeric_spec
 from wolfeye.widgets.numeric_editor import configure_numeric_editor, numeric_value, set_numeric_value
 from wolfeye.widgets.tcc_chart import TccChartDialog

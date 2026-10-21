@@ -40,7 +40,7 @@ from wolfeye.point_schema import (
     BINARY_OUTPUT_COMMANDS,
     BINARY_OUTPUT_POINT_NAMES,
 )
-from wolfeye.services.beacheye import SIGNAL_CHANNEL_NAMES, SIGNAL_SAMPLES
+from wolfeye.services.wolfeye import SIGNAL_CHANNEL_NAMES, SIGNAL_SAMPLES
 from wolfeye.services.signal_analysis import (
     MovingSignalAnalysis,
     SignalAnalysisError,
@@ -656,6 +656,7 @@ class _SignalCapture:
     rated_frequency_hz: float | None
     config: dict[str, Any] | None
     created_at: datetime
+    samples_per_cycle: int = SIGNAL_SAMPLES
 
     @property
     def sample_count(self) -> int:
@@ -663,7 +664,7 @@ class _SignalCapture:
 
     @property
     def cycle_count(self) -> int:
-        return max(1, (self.sample_count + SIGNAL_SAMPLES - 1) // SIGNAL_SAMPLES)
+        return max(1, (self.sample_count + self.samples_per_cycle - 1) // self.samples_per_cycle)
 
     @property
     def is_fault_capture(self) -> bool:
@@ -741,11 +742,11 @@ class SignalPage(QWidget):
         self.get_button.setEnabled(available)
         self.adc_button.setEnabled(available)
 
-    def set_adc(self, channels: list[list[float]]) -> None:
+    def set_adc(self, channels: list[list[float]], sample_rate_hz: float | None = None) -> None:
         if not hasattr(self, "adc_viewer"):
             self.adc_viewer = SignalViewerWindow(self)
             self.adc_viewer.setWindowTitle(f"{PRODUCT_NAME} - Raw ADC")
-        self.adc_viewer.set_cycle("Raw ADC counts · company signal loader", channels, None, 0, None)
+        self.adc_viewer.set_cycle("Raw ADC counts · company signal loader", channels, sample_rate_hz, 0, None)
         self.adc_viewer.show()
         self.adc_viewer.raise_()
 
@@ -755,7 +756,11 @@ class SignalPage(QWidget):
         sample_rate_hz: float | None = None,
         rated_frequency_hz: float | None = None,
         config: dict[str, Any] | None = None,
+        samples_per_cycle: int = SIGNAL_SAMPLES,
     ) -> None:
+        if samples_per_cycle not in (32, 64):
+            self._clear_analysis("Signal cycle must contain 32 or 64 samples")
+            return
         if len(channels) < 7 or not channels[0]:
             self._clear_analysis("Signal capture is incomplete")
             return
@@ -774,6 +779,7 @@ class SignalPage(QWidget):
             rated_frequency_hz,
             deepcopy(config) if config is not None else None,
             datetime.now(),
+            samples_per_cycle,
         )
         self.captures.append(capture)
         index = len(self.captures) - 1
@@ -844,10 +850,10 @@ class SignalPage(QWidget):
         self.cycle_index = index
         button = self.cycle_buttons.buttons()[index]
         button.setChecked(True)
-        start = index * SIGNAL_SAMPLES
-        end = min(start + SIGNAL_SAMPLES, capture.sample_count)
+        start = index * capture.samples_per_cycle
+        end = min(start + capture.samples_per_cycle, capture.sample_count)
         channels = [list(values[start:end]) for values in capture.channels]
-        origin = (index - 1) * SIGNAL_SAMPLES if capture.is_fault_capture else start
+        origin = (index - 1) * capture.samples_per_cycle if capture.is_fault_capture else start
         boundary = (
             "end"
             if capture.is_fault_capture and index == 0
@@ -858,7 +864,7 @@ class SignalPage(QWidget):
         status = self._status_text(capture, index, start, end)
         self.capture_status.setText(status)
         self.plots.set_cycle(channels, capture.sample_rate_hz, origin, boundary)
-        self._select_analysis_window(index * 2)
+        self._select_analysis_window(index)
         if self.viewer_window is not None:
             self.viewer_window.set_cycle(status, channels, capture.sample_rate_hz, origin, boundary)
 
@@ -897,8 +903,8 @@ class SignalPage(QWidget):
                 capture.sample_rate_hz,
                 capture.rated_frequency_hz,
                 capture.config,
-                window_size=64,
-                step_size=32,
+                window_size=capture.samples_per_cycle,
+                step_size=capture.samples_per_cycle,
             )
         except SignalAnalysisError as exc:
             self.moving_analysis = ()
@@ -908,7 +914,7 @@ class SignalPage(QWidget):
             self.analysis_window.set_moving_results(
                 self.moving_analysis,
                 capture.sample_rate_hz,
-                SIGNAL_SAMPLES if capture.is_fault_capture else None,
+                capture.samples_per_cycle if capture.is_fault_capture else None,
             )
 
     def _select_analysis_window(self, index: int) -> None:
@@ -929,7 +935,7 @@ class SignalPage(QWidget):
         self, capture: _SignalCapture, window: MovingSignalAnalysis
     ) -> str:
         if capture.sample_rate_hz:
-            origin = SIGNAL_SAMPLES if capture.is_fault_capture else 0
+            origin = capture.samples_per_cycle if capture.is_fault_capture else 0
             start_ms = (window.start_sample - origin) * 1000 / capture.sample_rate_hz
             end_ms = (window.end_sample - origin) * 1000 / capture.sample_rate_hz
             timing = (
@@ -941,7 +947,7 @@ class SignalPage(QWidget):
             timing = f"samples {window.start_sample + 1}–{window.end_sample}"
         return (
             f"Moving window {self.analysis_window_index + 1}/{len(self.moving_analysis)}"
-            f" · {timing} · 32-sample step"
+            f" · {timing} · {capture.samples_per_cycle}-sample step"
         )
 
     def _clear_analysis(self, message: str) -> None:
@@ -971,7 +977,7 @@ class SignalPage(QWidget):
         self.analysis_window.set_moving_results(
             self.moving_analysis,
             capture.sample_rate_hz,
-            SIGNAL_SAMPLES if capture.is_fault_capture else None,
+            capture.samples_per_cycle if capture.is_fault_capture else None,
         )
         self.analysis_window.select_window(self.analysis_window_index)
         self.analysis_window.show()

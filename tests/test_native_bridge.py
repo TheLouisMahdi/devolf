@@ -41,7 +41,7 @@ class NativeBridgeTests(unittest.TestCase):
     def test_old_event_bridge_abi_requires_rebuild_before_calling_changed_api(self) -> None:
         beacheye._native.cache_clear()
         try:
-            for version in (6, 7, 8, 9):
+            for version in (6, 7, 8, 9, 10, 11):
                 with patch.object(beacheye.ct, "CDLL") as loader:
                     loader.return_value.be_abi_version.return_value = version
                     with self.assertRaisesRegex(ValueError, "rebuild"):

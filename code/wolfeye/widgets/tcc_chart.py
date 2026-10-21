@@ -35,7 +35,7 @@ from wolfeye.widgets.numeric_editor import configure_numeric_editor, numeric_val
 
 def calculate_trip_time_s(element: dict[str, Any], current_a: float) -> float | None:
     """Call the unchanged company WolfEye calculator; convert UI seconds to ms."""
-    from wolfeye.services.beacheye import calculate_tcc_trip_ms
+    from wolfeye.services.wolfeye import calculate_tcc_trip_ms
 
     curve_type = str(element.get("type", "TD"))
     if curve_type not in TCC_TYPES:

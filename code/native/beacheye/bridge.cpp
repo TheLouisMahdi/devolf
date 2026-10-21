@@ -19,7 +19,9 @@
 static_assert(sizeof(BEInfo) == 32 && sizeof(BEPoint) == 12 && sizeof(BEEvent) == 24);
 static_assert(sizeof(BENamedPoint) == 80 && sizeof(BENamedEvent) == 88);
 static_assert(sizeof(float) == 4 && std::numeric_limits<float>::is_iec559);
+static_assert(ADC_64_SAMPLING == 1 && ADC_SAMPLING_SIZE == 64);
 static_assert(SIG_BUFF_SIZE == 64 && offsetof(Signals, Vbat) == 10 * 64 * 4);
+static_assert(sizeof(Signals) == 12 * 64 * sizeof(float));
 
 namespace {
 constexpr uint8_t START_CAT = 0x41;
@@ -203,7 +205,7 @@ int copy_settings_json(const std::shared_ptr<Settings>& settings, char* out, siz
 }
 }
 
-uint32_t __cdecl be_abi_version(void) { return 10; }
+uint32_t __cdecl be_abi_version(void) { return 12; }
 
 int __cdecl be_info(const uint8_t* data, size_t size, BEInfo* out) {
     if (!data || !out || size < 16) return -1;
@@ -298,13 +300,6 @@ int __cdecl be_events_named(
         }
     }
     return count;
-}
-
-int __cdecl be_signal(const uint8_t* data, size_t size, float* out, size_t capacity) {
-    constexpr size_t bytes = offsetof(Signals, Vbat);
-    if (!data || !out || size < bytes || capacity < bytes / sizeof(float)) return -1;
-    std::memcpy(out, data, bytes);
-    return static_cast<int>(bytes / sizeof(float));
 }
 
 int __cdecl be_frame_build(

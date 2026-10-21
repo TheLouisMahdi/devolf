@@ -87,48 +87,50 @@ repository, branch and revision build options have been removed.
 BeachEye source is resolved through authenticated GitHub CLI into an external
 cache. The build verifies repository access, privacy and pinned revisions;
 it stops if these checks fail. Private source and generated DLLs are not
-tracked in this repository. The resolver applies desktop compatibility and
-lossless numeric-export transformations only to that external cache.
+tracked in this repository. The resolver uses a pristine `upstream` cache and
+never rewrites company headers, JSON conversion or serialization. Modified
+checkouts are rejected by resolution, CMake and the post-build check.
 
 All relay read/write, measurements and events use **BeachEye
-`ver_50_remaster`**, currently pinned to `18d5e1696730c1167cae854f83d77eb0c20d9ac5`
-(branch head checked on 2026-10-14). A device reporting build 51 still uses
+`ver_50_remaster`**, currently pinned to `bee19ba2851658f03601375aec458a21633055bb`
+(branch head checked on 2026-10-20). A device reporting build 51 still uses
 this branch's `DisablePoints(model, build)` mapping; no separate revision-51
 DLL is selected. FC22AR build 51 uses 410 binary and 122 analog points in a
 300-byte packed BI/AI response.
 
 Both **FC22AR (auto recloser)** and **FC22S (sectionalizer)** use the company
-maps for build 50 and builds greater than 50. INFO retains its full 16-bit
-build number; the bridge prevents overflow in the company's 8-bit revision
-API. Simulated read/write and measurement tests cover builds 50, 51, 52, 100,
-255, 256, 257, 306 and 65535 for both models. Later builds work with the current
-company wire format; a future firmware format change requires a new source
-audit. See [compatibility and cleanup details](docs/UPSTREAM_SYNC.md#single-source-compatibility-and-cleanup).
+point maps and deserializers. The C ABI exposes the compiled company source;
+Windows socket handling and ABI marshaling remain local integration code.
 
 Frame transmission and reception use the protocol's two-byte length field,
 without a general 5 KiB payload rejection. Native requests reserve one byte
-for the company sequence; legacy requests use the full frame body. Firmware
+for the company sequence. Firmware
 file chunks retain the company's `MAX_DATA_SIZE - 4` partitioning.
 Complete measurements with a different point count are displayed by wire index
 (`BI N`, `AI N`, `Counter N`); matching profiles retain company names. Empty
 channels and repeated channel blocks are supported without dropping values.
-Event reception includes 5,112-byte and larger responses. Serialized BI/AI/Counter
-streams and legacy rings share the company point map. Event record sizes come
-from the pinned BeachEye schema; complete-stream validation also recognizes
-deployed short Counter records caused by the older company serializer. Layout
-selection does not depend on a fixed response size, device model or build.
-Both 16-bit and 32-bit transmitted Counter values retain their width.
-Event file downloads follow the device's reported length without a desktop
-1 MiB rejection; chunk sequences wrap within their two-byte field. Interrupted downloads
-retry twice; invalid responses are saved with device metadata under
-`%LOCALAPPDATA%\DEVolf\diagnostics\events-response.bin` and `.json`.
-See [event verification and remaining limits](docs/UPSTREAM_SYNC.md#event-reception-correction).
+Relay communication uses only sequenced BeachEye TCP on port 6536. Failed
+connections or INFO handshakes are reported directly; Legacy TCP/HTTP and
+automatic fallback have been removed. Events use the company's current
+`Event::Deserialize` and `SerializeSize`, without ring or short-Counter formats.
+Signals use the company's ten-channel structure with 32 or 64 samples per
+channel, selected by INFO flag `0x02`, at 1600 or 3200 Sa/s respectively.
+32-sample devices may return fixed-size buffers; only the INFO-selected
+prefix is plotted. See [the SIGNAL/ADC audit](docs/SIGNAL_ADC_PARITY_2026-10-21.md).
+Get ADC uses the original company signal loader, one cycle at a time.
+BeachEye bridge ABI is **12**; WolfEye core ABI is **1**. Rebuild both DLLs
+and the EXE together. `wolfeye_core.dll` runs the company TCC calculator,
+AR stage rules and SIGNAL/ADC loader. Qt retains the existing appearance,
+signal analysis, capture history and standalone viewers. EmWolf is unchanged.
+
+For editable company sources and the development build command, see
+[the current architecture](docs/COMPANY_PARITY_AUDIT.md#current-architecture--2026-10-21).
 
 ## Features
 
 | Area | Capabilities |
 | --- | --- |
-| Connection and status | LAN connection, native handshake with legacy fallback, device identity, alarms and operating state. |
+| Connection and status | BeachEye LAN connection and INFO handshake, device identity, alarms and operating state. |
 | Measurements and events | Revision-aware analog/binary/counter values, timestamps and 32-bit counters. |
 | General settings | Measurement, DNP3/IEC configuration, ports, digital I/O, functions, synchronization, security and heater settings. |
 | Protection and TCC | FC22AR/FC22S menus, four groups, UV/OV stages, IEC/ANSI curves and current bounds. |
@@ -137,19 +139,22 @@ See [event verification and remaining limits](docs/UPSTREAM_SYNC.md#event-recept
 | EmWolf | EWS2 setup/projects/scenarios, digital-input transitions, result interpretation and PDF reports. |
 | FC22 Tester | Inspection sessions, persistent form/test values, company checklist PDFs and Windows printing. |
 
-Current 3,439-byte and deployed 3,243-byte revision-50 settings layouts retain
-unchanged device bytes. Company `master` disables engineering-range numeric
-validation; DEVolf keeps actual storage/wire bounds and precise units. See
-[the numeric audit](docs/NUMERIC_SETTINGS_AUDIT.md) and
-[all 1,252 numeric paths](docs/NUMERIC_SETTINGS_AUDIT.csv).
+Settings use the company's original wire serializer and defaults. The Qt editor
+assigns typed `Configure` fields directly, like the company desktop, without
+passing through the mutating company JSON exporter. Original TCC calculation
+and AR stage rules are compiled from the pinned pristine WolfEye checkout.
+EmWolf, FC22 Tester and user analysis/report features remain unchanged.
+See [the current company-process audit](docs/COMPANY_PARITY_AUDIT.md) for source
+provenance, corrections and the explicit remaining differences. Sampling
+regressions are covered in `tests/test_signal_sampling.py`.
 
 The internal `wolfeye` package, native DLL names and schema identifiers are
 retained for ABI compatibility. The product name and EXE are **DEVolf**.
 
 ## Company file mapping
 
-Reference: [company WolfEye master](https://github.com/majidnow/wolfeye/tree/989f9fffe4b58bce5b98213de945625780addcda),
-commit `989f9fffe4b58bce5b98213de945625780addcda`.
+Reference: [company WolfEye master](https://github.com/majidnow/wolfeye/tree/7e58f4af439c6fa9c9db51e4558936264401732a),
+commit `7e58f4af439c6fa9c9db51e4558936264401732a` (checked 2026-10-20).
 
 [The complete file-by-file inventory](docs/UPSTREAM_SYNC.md#file-by-file-mapping)
 accounts for **all 60 tracked master entries**, with source links, destination
@@ -179,6 +184,7 @@ code/main.py              Application entry point
 code/wolfeye/widgets/     Qt pages, dialogs and charts
 code/wolfeye/services/    Device, protocol, analysis and report services
 code/native/beacheye/     C ABI, active transport adapter and CMake build
+code/native/wolfeye/      Small C ABI for company WolfEye algorithms
 code/native/DataProvider/ Six required CRC/JSON/configuration files
 code/assets/             Branding, SVG controls and form templates
 tests/                   Regression tests

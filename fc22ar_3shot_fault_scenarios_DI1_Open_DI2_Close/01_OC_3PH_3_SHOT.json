@@ -168,7 +168,7 @@
         },
         "Ib": {
           "enabled": true,
-          "amplitude": 0.45,
+          "amplitude": 0.1,
           "frequency": 50.0,
           "phase": 120,
           "harmonic1_order": 2,
@@ -178,7 +178,7 @@
         },
         "Ic": {
           "enabled": true,
-          "amplitude": 0.45,
+          "amplitude": 0.15,
           "frequency": 50.0,
           "phase": 240,
           "harmonic1_order": 2,
@@ -188,7 +188,7 @@
         },
         "In": {
           "enabled": true,
-          "amplitude": 0.45,
+          "amplitude": 0.1,
           "frequency": 50.0,
           "phase": 0,
           "harmonic1_order": 2,
@@ -356,7 +356,7 @@
         },
         "Ib": {
           "enabled": true,
-          "amplitude": 0.45,
+          "amplitude": 0.1,
           "frequency": 50.0,
           "phase": 120,
           "harmonic1_order": 2,
@@ -366,7 +366,7 @@
         },
         "Ic": {
           "enabled": true,
-          "amplitude": 0.45,
+          "amplitude": 0.15,
           "frequency": 50.0,
           "phase": 240,
           "harmonic1_order": 2,
@@ -376,7 +376,7 @@
         },
         "In": {
           "enabled": true,
-          "amplitude": 0.45,
+          "amplitude": 0.1,
           "frequency": 50.0,
           "phase": 0,
           "harmonic1_order": 2,
@@ -544,7 +544,7 @@
         },
         "Ib": {
           "enabled": true,
-          "amplitude": 0.45,
+          "amplitude": 0.1,
           "frequency": 50.0,
           "phase": 120,
           "harmonic1_order": 2,
@@ -554,7 +554,7 @@
         },
         "Ic": {
           "enabled": true,
-          "amplitude": 0.45,
+          "amplitude": 0.15,
           "frequency": 50.0,
           "phase": 240,
           "harmonic1_order": 2,
@@ -564,7 +564,7 @@
         },
         "In": {
           "enabled": true,
-          "amplitude": 0.45,
+          "amplitude": 0.1,
           "frequency": 50.0,
           "phase": 0,
           "harmonic1_order": 2,
@@ -732,7 +732,7 @@
         },
         "Ib": {
           "enabled": true,
-          "amplitude": 0.45,
+          "amplitude": 0.1,
           "frequency": 50.0,
           "phase": 120,
           "harmonic1_order": 2,
@@ -742,7 +742,7 @@
         },
         "Ic": {
           "enabled": true,
-          "amplitude": 0.45,
+          "amplitude": 0.15,
           "frequency": 50.0,
           "phase": 240,
           "harmonic1_order": 2,
@@ -752,7 +752,7 @@
         },
         "In": {
           "enabled": true,
-          "amplitude": 0.45,
+          "amplitude": 0.1,
           "frequency": 50.0,
           "phase": 0,
           "harmonic1_order": 2,
@@ -869,9 +869,9 @@
   "device": {
     "model": "FC22AR",
     "ip": "192.168.137.10",
-    "firmware": 100,
+    "firmware": 200,
     "hardware": 2,
     "build": 51,
-    "transport": "Native TCP:6536"
+    "transport": "BeachEye TCP:6536"
   }
 }
