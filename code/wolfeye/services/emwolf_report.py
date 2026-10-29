@@ -24,7 +24,7 @@ from reportlab.platypus import (
 )
 
 from wolfeye.branding import PRODUCT_NAME
-from wolfeye.services.emwolf_protocol import CHANNEL_NAMES, Project
+from wolfeye.services.emwolf_protocol import BOARD_SAMPLE_TIME_US, CHANNEL_NAMES, Project
 
 
 BRAND_NAVY = colors.HexColor("#16324A")
@@ -56,6 +56,8 @@ class ScenarioExecution:
     trip_input: int | None = None
     trip_value: bool | None = None
     operation: str | None = None
+    output_applied_us: int | None = None
+    ended_us: int | None = None
 
 
 @dataclass
@@ -66,6 +68,9 @@ class EmWolfRunReport:
     started_at: datetime
     executions: list[ScenarioExecution]
     completed_at: datetime | None = None
+    board_run_id: str | None = None
+    board_state: str = ""
+    results_received: bool = False
     _trip_scenario_indices: list[int] = field(default_factory=list, repr=False)
     _next_trip_position: int = field(default=0, repr=False)
     _open_seen: bool = field(default=False, repr=False)
@@ -93,10 +98,45 @@ class EmWolfRunReport:
         )
 
     @property
+    def receipt_description(self) -> str:
+        if not self.board_run_id:
+            return "Configuration only - no measured board results"
+        if self.results_received:
+            return "All recorded results received; run status is shown separately"
+        return "Partial results snapshot - the run or result transfer is not complete"
+
+    @property
     def current_trip_scenario_index(self) -> int | None:
         if self._next_trip_position >= len(self._trip_scenario_indices):
             return None
         return self._trip_scenario_indices[self._next_trip_position]
+
+    def record_board_event(self, event: dict) -> int | None:
+        """Use the board's stage ID and full timestamp, including offline replay."""
+        index=int(event["scenario"])
+        if not 0<=index<len(self.executions):
+            raise ValueError("Board event refers to an unknown scenario")
+        execution=self.executions[index]
+        kind=event["kind"]
+        if kind==1:
+            if execution.state in ("ARMED","CONFIGURED"): execution.state="RUNNING"
+        elif kind==2:
+            execution.output_applied_us=event["time_us"]
+        elif kind==3:
+            if event["input_id"]==self.project.scenarios[index].digital_input:
+                execution.transitions.append(DITransition(event["input_id"],event["value"],event["time_us"]))
+        elif kind==4:
+            if index not in self._trip_scenario_indices:
+                raise ValueError("Trip result does not match a DI scenario")
+            self._next_trip_position=self._trip_scenario_indices.index(index)
+            result=self.record_trip(event["input_id"],event["value"],event["time_us"])
+            if self.board_run_id and self.board_state!="COMPLETED": self.completed_at=None
+            return result
+        elif kind==5:
+            execution.ended_us=event["time_us"]
+            if execution.state not in ("TRIPPED","RECLOSED","CLOSED"):
+                execution.state="COMPLETED"
+        return None
 
     def record_transition(self, input_id: int, value: bool, elapsed_us: int) -> int | None:
         index = self.current_trip_scenario_index
@@ -407,7 +447,10 @@ def generate_emwolf_pdf(
     metadata = [
         ["REPORT ID", report_id, "TEST DATE", report.started_at.strftime("%Y-%m-%d %H:%M:%S")],
         ["DEVICE UNDER TEST", device_identity, "LAN / SOURCE", device_link],
-        ["SAMPLE TIME", f"{_format_number(report.project.setup.sample_time_us)} us", "STAGES", str(len(scenarios))],
+        ["BOARD SAMPLE TIME", f"{BOARD_SAMPLE_TIME_US} us", "STAGES", str(len(scenarios))],
+        ["BOARD RUN", report.board_run_id or "Not uploaded", "RUN STATE", report.board_state or "CONFIGURATION ONLY"],
+        ["RESULTS", "Fully received" if report.results_received else "Partial snapshot" if report.board_run_id else "No measured results",
+         "TIME BASIS", "Output LOAD to DI edge; network delay excluded"],
     ]
 
     def stage_card(stage_number: int, scenario, execution, card_width: float) -> Table:
@@ -419,7 +462,7 @@ def generate_emwolf_pdf(
         is_reclose = execution.operation == "RECLOSE"
         if execution.trip_time_us is None:
             trip_value = Paragraph(
-                "PENDING" if scenario.end_type == "DI_TOGGLE" else "N/A",
+                "NOT RECORDED" if scenario.end_type == "DI_TOGGLE" else "N/A",
                 trip_empty_style,
             )
             trip_background = SOFT_GRAY
@@ -580,7 +623,7 @@ def generate_emwolf_pdf(
                 [Paragraph(f"STAGE {stage_number}", stage_style)],
                 [Paragraph(escape(scenario.name), scenario_style)],
                 [details],
-                [Paragraph("RECLOSE TIME" if is_reclose else "TRIP TIME", trip_label_style)],
+                [Paragraph({"TRIP": "TRIP TIME", "RECLOSE": "RECLOSE TIME", "CLOSE": "CLOSE TIME"}.get(execution.operation, "RESPONSE TIME"), trip_label_style)],
                 [trip_value],
                 [analog_table],
                 [outputs],

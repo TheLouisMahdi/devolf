@@ -33,11 +33,16 @@ The BeachEye DLL is compiled separately for each architecture.
 
 ### Build command
 
-Run from the repository root:
+Run from the repository root. **Build the current x64 version without running tests:**
+
+**`powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -Architecture x64 -SkipTests`**
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -Architecture x64 -SkipTests
 ```
+
+`-SkipTests` skips unit tests and the packaged startup smoke test. Native compilation,
+EXE packaging and architecture checks still run. Omit it to run the existing checks.
 
 To update both BeachEye `ver_50_remaster` and WolfEye `master`, then run the full build:
 
@@ -49,7 +54,9 @@ The switches update `beacheye-source.json` and `wolfeye-source.json` independent
 Omitting both repeats the recorded SHAs. See [guidebuild.txt](guidebuild.txt) for the
 English command reference, native-only builds and custom build options.
 
-**Outputs:** `Dist\DEVolf-x64.exe` and `Dist\DEVolf-x86.exe`.
+**Outputs:** `Dist\DEVolf-x64.exe` for x64 and `Dist\DEVolf-x86.exe` for x86.
+If the requested EXE is running, it is preserved and the script prints an alternate
+output name (`-new`, or a timestamp if needed).
 
 The default builds x64. To build x86:
 
@@ -61,8 +68,9 @@ Use an i686 MinGW GCC toolchain for x86, selected by `DEVOLF_GCC_BIN`
 or `%LOCALAPPDATA%\DEVolf\Toolchains\mingw32\bin`.
 
 The script creates the selected environment when needed, installs the matching
-requirements, builds only BeachEye, runs all tests, packages the EXE and checks
-its architecture and startup. An existing runtime can be selected with
+requirements, builds only BeachEye, packages the EXE and checks its architecture.
+Without `-SkipTests`, it also runs all tests and checks packaged startup.
+An existing runtime can be selected with
 `-PythonExecutable`.
 GCC/Ninja are selected explicitly. The default toolchain is
 `C:\msys64\ucrt64\bin`; use `DEVOLF_GCC_BIN` for a different installation.
@@ -151,20 +159,49 @@ For source provenance and the direct Python ports, see
 | Protection and TCC | FC22AR/FC22S menus, four groups, UV/OV stages, IEC/ANSI curves and current bounds. |
 | Signals and analysis | Capture history, waveform viewing, zoom/pan, RMS, phasors, harmonics and sequence quantities. |
 | Device operations | Settings read/write, firmware/bootloader transfer and device reset. |
-| EmWolf | EWS2 setup/projects/scenarios, digital-input transitions, result interpretation and PDF reports. |
+| EmWolf | EWS2 projects, independent batch execution, durable result retrieval, trip/close times, JSON result exports and PDF reports. |
 | FC22 Tester | Inspection sessions, persistent form/test values, company checklist PDFs and Windows printing. |
 
 Settings use the company's original wire serializer and defaults. The Qt editor
 assigns typed `Configure` fields directly, like the company desktop, without
 passing through the mutating company JSON exporter. TCC calculation
 and AR stage rules are direct Python ports of the pinned WolfEye master source.
-EmWolf, FC22 Tester and user analysis/report features remain unchanged.
 See [the current company-process audit](docs/COMPANY_PARITY_AUDIT.md) for source
 provenance, corrections and the explicit remaining differences. Sampling
 regressions are covered in `tests/test_signal_sampling.py`.
 
 The internal `wolfeye` package, native DLL names and schema identifiers are
 retained for ABI compatibility. The product name and EXE are **DEVolf**.
+
+## EmWolf stored results
+
+The EmWolf page uses an autonomous run ID with a matching board-side EmWolf
+build. **Upload and run once** transfers the complete EWS2 scenario batch;
+accepted runs continue when TCP disconnects. Finite batches run once and use
+the board's existing Safe Stop path at completion. **Stop test** explicitly
+stops the selected run. **Disconnect** and closing WolfEye detach the client.
+
+In **EmWolf -> Stored results**:
+
+1. **Receive results** connects or refreshes the current run and resumes partial
+   downloads without uploading or restarting a scenario.
+2. Check the received-event count and **receipt confirmed** status.
+3. **Save results JSON** exports original parameters, indexed events, full-width
+   board timestamps and whether receipt is complete. **Save JSON** in the
+   Connection row saves the editable scenario project instead.
+4. **Open results folder** opens the local board receipt directory;
+   **Print PDF** exports the received test report.
+
+Board data lives in `/var/lib/emwolf/run.bin`; `received.ack` records full PC
+receipt. PC receipts live under `%LOCALAPPDATA%\WolfEye\EmWolf\<board-hash>\`.
+The board retains one uncollected run and rejects replacements until all results
+have been durably received. The event buffer is bounded to 65,536 records;
+exhaustion causes Safe Stop while retaining recorded data. Completed results
+survive board restarts. Power loss during an active run can lose the unsynced
+RAM tail; recovery reports INTERRUPTED and never reactivates outputs.
+These are parameters and event/timing results, not continuous DAC waveform
+recordings. The Windows build does not build or deploy board firmware.
+See [EmWolf storage and recovery details](docs/EMWOLF_AUTONOMOUS.md).
 
 ## Company file mapping
 
@@ -261,8 +298,12 @@ and device connections retain their existing responsibilities.
 FC22 Tester shares the **existing EmWolfConnection and EWS2 protocol** with the
 EmWolf tab. Its Setup page can connect/disconnect the board, run the current
 EmWolf project and open the scenario editor. Both tabs show the same connection
-state and endpoint. Connecting the test board and reading the FC22 DUT remain
-the existing separate EmWolf and DeviceService responsibilities.
+state and endpoint. Start EmWolf manually in the board terminal before Connect;
+Connect opens only TCP. Disconnect closes TCP while an accepted autonomous
+run continues; use Stop test to stop outputs. Use Ctrl+C in the board terminal
+to exit EmWolf. Connecting
+the test board and reading the FC22 DUT remain the existing separate EmWolf and
+DeviceService responsibilities.
 
 Without loading a lot, incoming DUT snapshots automatically fill **22 numeric
 fields** (phase/line voltages, currents, total powers, both frequencies and PF)
@@ -320,6 +361,7 @@ the normal build.
 
 ## Documentation
 
+- [EmWolf independent runs, storage and result retrieval](docs/EMWOLF_AUTONOMOUS.md)
 - [Complete company file mapping and DEVolf module responsibilities](docs/UPSTREAM_SYNC.md)
 - [Current numeric storage limits](code/wolfeye/numeric_schema.py) and [regression tests](tests/test_numeric_settings.py)
 - [Release notes](docs/RELEASE_NOTES.md)

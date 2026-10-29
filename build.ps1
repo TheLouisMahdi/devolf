@@ -8,7 +8,8 @@ param(
     [switch]$UpdateWolfEye,
     [string]$WolfEyeSourceDirectory,
     [string]$PythonExecutable,
-    [string]$Wheelhouse
+    [string]$Wheelhouse,
+    [switch]$SkipTests
 )
 
 $ErrorActionPreference = "Stop"
@@ -165,18 +166,22 @@ $previousNativeDirectory = $env:WOLFEYE_NATIVE_DIR
 $env:PYTHONPATH = Join-Path $projectRoot "code"
 $env:WOLFEYE_NATIVE_DIR = $nativeDirectory
 try {
-    $testRoot = Join-Path $projectRoot "tests"
-    $codeRoot = Join-Path $projectRoot "code"
-    $testRunner = @"
+    if (-not $SkipTests) {
+        $testRoot = Join-Path $projectRoot "tests"
+        $codeRoot = Join-Path $projectRoot "code"
+        $testRunner = @"
 import sys, unittest
 sys.path.insert(0, r'$codeRoot')
 suite = unittest.defaultTestLoader.discover(r'$testRoot')
 result = unittest.TextTestRunner(verbosity=2).run(suite)
 raise SystemExit(0 if result.wasSuccessful() else 1)
 "@
-    & $python -c $testRunner
-    if ($LASTEXITCODE -ne 0) {
-        throw "Tests failed with exit code $LASTEXITCODE."
+        & $python -c $testRunner
+        if ($LASTEXITCODE -ne 0) {
+            throw "Tests failed with exit code $LASTEXITCODE."
+        }
+    } else {
+        Write-Host "Unit tests and packaged startup smoke test skipped (-SkipTests)."
     }
 
     $arguments = @(
@@ -239,21 +244,27 @@ if ($actualMachine -ne $expectedMachine) {
     throw "Packaged EXE architecture mismatch: expected $architecture, PE machine 0x$($actualMachine.ToString('X4'))."
 }
 
-$previousQtPlatform = $env:QT_QPA_PLATFORM
-$env:QT_QPA_PLATFORM = "offscreen"
-try {
-    $smoke = Start-Process `
-        -FilePath $output `
-        -ArgumentList "--smoke-test" `
-        -PassThru `
-        -Wait `
-        -WindowStyle Hidden
-    if ($smoke.ExitCode -ne 0) {
-        throw "Built EXE failed its Qt startup smoke test with exit code $($smoke.ExitCode)."
+if (-not $SkipTests) {
+    $previousQtPlatform = $env:QT_QPA_PLATFORM
+    $env:QT_QPA_PLATFORM = "offscreen"
+    try {
+        $smoke = Start-Process `
+            -FilePath $output `
+            -ArgumentList "--smoke-test" `
+            -PassThru `
+            -Wait `
+            -WindowStyle Hidden
+        if ($smoke.ExitCode -ne 0) {
+            throw "Built EXE failed its Qt startup smoke test with exit code $($smoke.ExitCode)."
+        }
+    }
+    finally {
+        $env:QT_QPA_PLATFORM = $previousQtPlatform
     }
 }
-finally {
-    $env:QT_QPA_PLATFORM = $previousQtPlatform
-}
 
-Write-Host "Built and smoke-tested: $output"
+if ($SkipTests) {
+    Write-Host "Built (tests skipped): $output"
+} else {
+    Write-Host "Built and smoke-tested: $output"
+}

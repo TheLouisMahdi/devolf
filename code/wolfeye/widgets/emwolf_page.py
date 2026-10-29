@@ -26,6 +26,7 @@ from wolfeye.qt import (
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
     QObject,
@@ -40,6 +41,7 @@ from wolfeye.qt import (
 
 from wolfeye.models import DeviceInfo
 from wolfeye.services.emwolf_protocol import (
+    BOARD_SAMPLE_TIME_US,
     CHANNEL_NAMES,
     CURRENT_CHANNEL_NAMES,
     DEFAULT_HOST,
@@ -57,6 +59,7 @@ from wolfeye.services.emwolf_protocol import (
     load_project,
     save_project,
 )
+from wolfeye.services.emwolf_run import STATE_NAMES, TERMINAL
 from wolfeye.services.emwolf_report import EmWolfRunReport, generate_emwolf_pdf
 from wolfeye.services.fc22_input_adapters import emwolf_scenario_values
 
@@ -66,6 +69,8 @@ class _ConnectionBridge(QObject):
     state = Signal(bool)
     result = Signal(int, bool, int)
     trip = Signal(int, bool, int)
+    run_state = Signal(object)
+    run_event = Signal(object)
 
 
 class _DeviceModelSwitch(QAbstractButton):
@@ -135,6 +140,7 @@ class EmWolfPage(QWidget):
     """Qt port of the supplied EmWolf Scenario Tool, preserving its wire format."""
 
     log_line = Signal(str)
+    log_cleared = Signal()
     log_window_requested = Signal()
     test_run_started = Signal(str)
     test_result = Signal(str, object)
@@ -149,21 +155,31 @@ class EmWolfPage(QWidget):
         self.execution_report: EmWolfRunReport | None = None
         self.current_index: int | None = None
         self.loading = False
+        self._run_info: dict = {}
+        self._run_status_ready = False
+        self._logged_run_id: int | None = None
+        self._logged_event_sequence = 0
         self.bridge = _ConnectionBridge()
         self.connection = EmWolfConnection(
             self.bridge.log.emit,
             self.bridge.result.emit,
             self.bridge.state.emit,
             self.bridge.trip.emit,
+            autonomous_enabled=True,
+            on_run_state=self.bridge.run_state.emit,
+            on_run_event=self.bridge.run_event.emit,
         )
         self._apply_visual_style()
         self._build_ui()
-        self.bridge.log.connect(self._log)
+        self.bridge.log.connect(self._connection_log)
         self.bridge.state.connect(self._set_connection_state)
         self.bridge.result.connect(self._show_result)
         self.bridge.trip.connect(self._record_trip)
+        self.bridge.run_state.connect(self._handle_run_state)
+        self.bridge.run_event.connect(self._handle_run_event)
         self._load_setup()
         self._refresh_scenarios(0)
+        self._refresh_report_preview()
         self.host.textChanged.connect(lambda: self.publish_board_state())
         self.port.valueChanged.connect(lambda: self.publish_board_state())
 
@@ -283,13 +299,22 @@ class EmWolfPage(QWidget):
         self.port.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.port.setFixedWidth(78)
         self.connect_button = QPushButton("Connect")
-        self.send_button = QPushButton("Send scenarios")
+        self.send_button = QPushButton("Upload and run once")
+        self.send_button.setEnabled(False)
+        self.send_button.setToolTip("Upload all stages once; Ethernet loss does not stop the accepted run")
+        self.stop_button = QPushButton("Stop test")
+        self.stop_button.setEnabled(False)
+        self.connect_button.setToolTip("Reconnect to receive stored results. Disconnect leaves an autonomous run executing.")
         self.state_label = QLabel("Disconnected")
-        self.save_button = QPushButton("Save JSON")
-        self.load_button = QPushButton("Load JSON")
-        self.pdf_button = QPushButton("Print PDF")
+        self.state_label.setWordWrap(True)
+        self.state_label.setMaximumWidth(260)
+        self.save_button = QPushButton("Save project")
+        self.save_button.setToolTip("Save scenario settings as JSON; measured results are kept separately")
+        self.load_button = QPushButton("Load project")
+        self.load_button.setToolTip("Load scenario settings from JSON; the report remains tied to its original run")
+        self.pdf_button = QPushButton("Export PDF")
         self.pdf_button.setToolTip(
-            "Create a formal A4 report focused on the first DI toggle trip time."
+            "Export the run shown in Report preview: original settings and board-confirmed results."
         )
         connection_row.addWidget(QLabel("Host"))
         connection_row.addWidget(self.host)
@@ -297,6 +322,7 @@ class EmWolfPage(QWidget):
         connection_row.addWidget(self.port)
         connection_row.addWidget(self.connect_button)
         connection_row.addWidget(self.send_button)
+        connection_row.addWidget(self.stop_button)
         connection_row.addWidget(self.state_label)
         connection_row.addStretch()
         connection_row.addWidget(self.pdf_button)
@@ -357,9 +383,11 @@ class EmWolfPage(QWidget):
             setup_grid.addWidget(label, row, pair * 2)
             setup_grid.addWidget(value, row, pair * 2 + 1)
             self.offsets[name] = value
-        self.sample_time = QLineEdit("8.2")
+        self.sample_time = QLineEdit(str(BOARD_SAMPLE_TIME_US))
+        self.sample_time.setReadOnly(True)
+        self.sample_time.setToolTip("The current EmWolf firmware uses a fixed 320 us sample period.")
         self.sample_time.setFixedWidth(90)
-        sample_time_label = QLabel("Sample time (us)")
+        sample_time_label = QLabel("Sample (us)")
         sample_time_label.setFixedWidth(104)
         setup_grid.addWidget(sample_time_label, 2, 0)
         setup_grid.addWidget(self.sample_time, 2, 1)
@@ -392,8 +420,10 @@ class EmWolfPage(QWidget):
         body_layout = QHBoxLayout(body)
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(6)
-        left = QWidget()
-        left_layout = QVBoxLayout(left)
+        left = QTabWidget()
+        self.scenario_tabs = left
+        scenario_list = QWidget()
+        left_layout = QVBoxLayout(scenario_list)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(7)
         self.scenario_table = QTableWidget(0, 3)
@@ -435,6 +465,34 @@ class EmWolfPage(QWidget):
             button.clicked.connect(callback)
             button_grid.addWidget(button, index // 3, index % 3)
         left_layout.addLayout(button_grid)
+
+        preview = QWidget()
+        preview_layout = QVBoxLayout(preview)
+        preview_layout.setContentsMargins(6, 6, 6, 6)
+        self.report_label = QLabel()
+        self.report_label.setWordWrap(True)
+        preview_layout.addWidget(self.report_label)
+        report_contents = QLabel(
+            "PDF includes the original run settings, device identity, stage status and "
+            "confirmed trip/close times shown below. Later editor changes do not alter that run."
+        )
+        report_contents.setWordWrap(True)
+        preview_layout.addWidget(report_contents)
+        self.report_table = QTableWidget(0, 4)
+        self.report_table.setHorizontalHeaderLabels(["Stage", "Result / status", "Input", "Time (ms)"])
+        self.report_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.report_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.report_table.verticalHeader().setVisible(False)
+        report_header = self.report_table.horizontalHeader()
+        report_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for column in range(1, 4):
+            report_header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        preview_layout.addWidget(self.report_table, 1)
+        timing_note = QLabel("Time = fault output LOAD to DI edge, measured by the board; network delay is excluded.")
+        timing_note.setWordWrap(True)
+        preview_layout.addWidget(timing_note)
+        left.addTab(scenario_list, "Scenarios")
+        left.addTab(preview, "Report preview")
 
         editor = QGroupBox("Selected scenario")
         editor_grid = QGridLayout(editor)
@@ -565,20 +623,27 @@ class EmWolfPage(QWidget):
         body_layout.addWidget(editor, 7)
         root.addWidget(body, 1)
 
-        log_box = QGroupBox("Log")
+        log_box = QGroupBox("Run log")
         log_layout = QVBoxLayout(log_box)
         log_layout.setContentsMargins(6, 11, 6, 6)
         log_layout.setSpacing(4)
         self.log_box = log_box
         self.log_layout = log_layout
         log_tools = QHBoxLayout()
+        log_hint = QLabel("Input edges are history; TRIP / CLOSE / RECLOSE entries are confirmed results.")
+        log_hint.setWordWrap(True)
+        log_tools.addWidget(log_hint)
         log_tools.addStretch()
         self.open_log_button = QPushButton("Open log window")
         self.open_log_button.clicked.connect(self.log_window_requested)
         log_tools.addWidget(self.open_log_button)
+        self.clear_log_button = QPushButton("Clear log")
+        self.clear_log_button.setToolTip("Clear both log views; recorded results and PDF data are kept")
+        log_tools.addWidget(self.clear_log_button)
         log_layout.addLayout(log_tools)
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
+        self.clear_log_button.clicked.connect(self.clear_log)
         self.log_view.setMaximumBlockCount(1000)
         self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.log_view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
@@ -591,6 +656,7 @@ class EmWolfPage(QWidget):
 
         self.connect_button.clicked.connect(self._toggle_connection)
         self.send_button.clicked.connect(self._send)
+        self.stop_button.clicked.connect(self._stop_test)
         self.save_button.clicked.connect(self._save)
         self.load_button.clicked.connect(self._load)
         self.pdf_button.clicked.connect(self._export_pdf)
@@ -614,13 +680,174 @@ class EmWolfPage(QWidget):
         else:
             self.connection.connect(self.host.text().strip(), self.port.value())
 
+    def _refresh_report_preview(self, scenario_index: int | None = None) -> None:
+        report = self.execution_report
+        if report is None:
+            self.report_label.setText(
+                "No measured run yet. Export PDF will contain the current scenario settings only. "
+                "Connect to receive results automatically, or upload a new run once."
+            )
+            self.report_table.setRowCount(0)
+            return
+        self.report_label.setText(
+            f"Run {report.board_run_id or '-'} | {report.project.device.model or 'Unknown device'} "
+            f"| {report.board_state or 'CONFIGURATION'}\n{report.receipt_description}"
+        )
+        self.report_table.setRowCount(len(report.executions))
+        rows = range(len(report.executions)) if scenario_index is None else (scenario_index,)
+        for row in rows:
+            scenario = report.project.scenarios[row]
+            execution = report.executions[row]
+            result_input = "-"
+            if execution.trip_input is not None:
+                result_input = (
+                    f"{report.project.setup.digital_input_name(execution.trip_input)} "
+                    f"(DI{execution.trip_input}) / {'HIGH' if execution.trip_value else 'LOW'}"
+                )
+            values = (
+                f"{row + 1}. {scenario.name}",
+                execution.operation or execution.state,
+                "-" if execution.trip_input is None else f"DI{execution.trip_input} {'HIGH' if execution.trip_value else 'LOW'}",
+                "-" if execution.trip_time_us is None else f"{execution.trip_time_us / 1000:.3f}",
+            )
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setToolTip(result_input if column == 2 else value)
+                self.report_table.setItem(row, column, item)
+
     def _set_connection_state(self, connected: bool) -> None:
-        self.state_label.setText("Connected" if connected else "Disconnected")
+        if connected: self._run_status_ready=False
+        self.state_label.setText("Connected; checking run" if connected else "Disconnected; reconnect to receive results")
+        self.send_button.setEnabled(False)
+        self.stop_button.setEnabled(connected)
         self.state_label.setStyleSheet("color:#087a20" if connected else "")
         self.connect_button.setText("Disconnect" if connected else "Connect")
         self.host.setEnabled(not connected)
         self.port.setEnabled(not connected)
         self.board_state_changed.emit(connected, self.host.text().strip(), self.port.value())
+        self._refresh_report_preview()
+
+    def _stop_test(self) -> None:
+        try:
+            self.connection.stop_outputs()
+        except (OSError,ValueError) as exc:
+            QMessageBox.critical(self,"Stop failed",str(exc))
+
+    def _handle_run_state(self, info: dict) -> None:
+        if "restore" in info:
+            meta=info["restore"]
+            run_id=int(meta["id"])
+            if run_id!=self._logged_run_id:
+                self._logged_run_id=run_id
+                self._logged_event_sequence=0
+                self._log(f"Report source: run {run_id:016x}; restoring original settings and board results")
+            if self._run_info.get("id") != run_id:
+                self._run_info = {}
+            project=Project.from_dict(meta["project"])
+            self.execution_report=EmWolfRunReport.begin(project,started_at=datetime.fromisoformat(meta["started_at"]))
+            self.execution_report.board_run_id=f"{int(meta['id']):016x}"
+            self.execution_report.board_state=STATE_NAMES.get(meta.get("state",1),"UNKNOWN")
+            self.execution_report.results_received=bool(meta.get("collected"))
+            self.test_run_started.emit(project.device.model)
+            self._refresh_report_preview()
+            return
+        previous_status = (
+            self._run_info.get("id"), self._run_info.get("state"), self._run_info.get("collected")
+        )
+        self._run_info=info.copy()
+        self._run_status_ready=True
+        state=info.get("state",0)
+        connected=self.connection.connected
+        description=STATE_NAMES.get(state,"UNKNOWN")
+        received=bool(info.get("collected")) and info.get("pc_count",0)>=info.get("count",0)
+        receipt=(" | results received" if received else f" | receiving {info.get('pc_count',0)}/{info.get('count',0)}") if state in TERMINAL else ""
+        self.state_label.setText(f"{'Connected' if connected else 'Disconnected'} | {description}{receipt}")
+        self.send_button.setEnabled(connected and (state==0 or received))
+        self.stop_button.setEnabled(connected and state in (0,1,2))
+        run_id=int(info.get("id",0))
+        report=self.execution_report
+        if report and info.get("id")==int(report.board_run_id or "0",16):
+            report.board_state=description
+            report.results_received=received
+            if state in TERMINAL:
+                if report.completed_at is None: report.completed_at=datetime.now().astimezone()
+                if state!=4:
+                    for execution in report.executions:
+                        if execution.state in ("RUNNING","ARMED","CONFIGURED"): execution.state=description
+            else:
+                report.completed_at=None
+        if run_id and previous_status != (run_id, state, info.get("collected")):
+            self._log(f"Run {run_id:016x}: {description}; results {'fully received' if received else 'receiving automatically'}")
+        self._refresh_report_preview()
+
+    def _handle_run_event(self, event: dict) -> None:
+        report=self.execution_report
+        if report is None: return
+        try:
+            index=report.record_board_event(event)
+        except ValueError as exc:
+            self._log(str(exc)); return
+        if event["kind"] in (3,4) and 1<=event["input_id"]<=4:
+            self.di_labels[event["input_id"]].setText("HIGH" if event["value"] else "LOW")
+        if index is not None:
+            execution=report.executions[index]
+            self.test_result.emit(report.project.device.model,emwolf_scenario_values(index,execution))
+        sequence=int(event["sequence"])
+        scenario_index = int(event["scenario"])
+        if sequence>self._logged_event_sequence:
+            self._logged_event_sequence=sequence
+            name=report.project.scenarios[scenario_index].name
+            if event["kind"]==2:
+                self._log_scenario_started(scenario_index)
+            elif event["kind"]==5:
+                self._log(f"Scenario {scenario_index + 1} ({name}) ended after {event['time_us']/1000:.3f} ms")
+            elif event["kind"]==3 and 1<=event["input_id"]<=4:
+                input_name = report.project.setup.digital_input_name(event["input_id"])
+                self._log(
+                    f"Scenario {scenario_index + 1} ({name}): {input_name} (DI{event['input_id']})="
+                    f"{'HIGH' if event['value'] else 'LOW'} at {event['time_us']/1000:.3f} ms "
+                    "after this stage's output; input edge only"
+                )
+            elif event["kind"]==4 and index is not None:
+                self._log_trip_result(index)
+        if event["kind"] != 3:
+            self._refresh_report_preview(scenario_index)
+
+    def _log_scenario_started(self, index: int) -> None:
+        report = self.execution_report
+        if report is None:
+            return
+        scenario = report.project.scenarios[index]
+        self._log(f"Scenario {index + 1}/{len(report.executions)} started: {scenario.name} - output applied by board")
+        for label, names, unit in (("Voltage", CHANNEL_NAMES[:4], "V"), ("Current", CHANNEL_NAMES[4:], "A")):
+            values = []
+            for name in names:
+                analog = scenario.analogs[name]
+                value = f"{name}=OFF"
+                if analog.enabled:
+                    value = f"{name}={analog.amplitude:g} {unit} @ {analog.frequency:g} Hz, {analog.phase} deg"
+                    for order, amplitude in (
+                        (analog.harmonic1_order, analog.harmonic1_amplitude),
+                        (analog.harmonic2_order, analog.harmonic2_amplitude),
+                    ):
+                        if amplitude:
+                            value += f", H{order}={amplitude:g} {unit}"
+                values.append(value)
+            self._log(f"  {label}: " + " | ".join(values))
+        outputs = ", ".join(
+            label for label, enabled in zip(("DO1 CLOSE", "DO2 TRIP/OPEN", "DO3", "DO4"), scenario.digital_outputs)
+            if enabled
+        ) or "all LOW"
+        if scenario.end_type == "DI_TOGGLE":
+            input_name = report.project.setup.digital_input_name(scenario.digital_input)
+            condition = f"first edge on {input_name} (DI{scenario.digital_input}); time starts at this output LOAD"
+        elif scenario.end_type == "TIME":
+            condition = f"{scenario.end_value:g} s after output LOAD"
+        elif scenario.end_type == "CYCLES":
+            condition = f"{scenario.end_value:g} cycles"
+        else:
+            condition = "infinite; use Stop test to finish"
+        self._log(f"  Digital outputs: {outputs} | End: {condition}")
 
     def publish_board_state(self) -> None:
         self.board_state_changed.emit(self.connection.connected, self.host.text().strip(), self.port.value())
@@ -722,12 +949,19 @@ class EmWolfPage(QWidget):
         )
         if scenario_index is None:
             return
-        scenario = self.execution_report.project.scenarios[scenario_index]
         execution = self.execution_report.executions[scenario_index]
         self.test_result.emit(
             self.execution_report.project.device.model,
             emwolf_scenario_values(scenario_index, execution),
         )
+        self._log_trip_result(scenario_index)
+        self._refresh_report_preview(scenario_index)
+
+    def _log_trip_result(self, scenario_index: int) -> None:
+        if self.execution_report is None:
+            return
+        scenario = self.execution_report.project.scenarios[scenario_index]
+        execution = self.execution_report.executions[scenario_index]
         trip_time_us = execution.trip_time_us
         trip_input = execution.trip_input
         trip_value = execution.trip_value
@@ -736,10 +970,19 @@ class EmWolfPage(QWidget):
         input_name = self.execution_report.project.setup.digital_input_name(trip_input)
         operation = execution.operation or "TRIP"
         self._log(
-            f"{scenario.name}: {operation} on {input_name} (DI{trip_input}) "
+            f"Scenario {scenario_index + 1} ({scenario.name}): confirmed {operation} on {input_name} (DI{trip_input}) "
             f"({'HIGH' if trip_value else 'LOW'}), "
-            f"{operation.casefold()} time={trip_time_us / 1000:.3f} ms"
+            f"{operation.casefold()} time={trip_time_us / 1000:.3f} ms - included in PDF"
         )
+
+    def clear_log(self) -> None:
+        self.log_view.clear()
+        self.log_cleared.emit()
+
+    def _connection_log(self, message: str) -> None:
+        # Keep user actions and errors, while hiding routine network traffic.
+        if not message.startswith(("Received frame type ", "Receiving stored EmWolf results;")):
+            self._log(message)
 
     def _log(self, message: str) -> None:
         line = f"{time.strftime('%H:%M:%S')}  {message}"
@@ -749,7 +992,7 @@ class EmWolfPage(QWidget):
     def _read_setup(self) -> Setup:
         return Setup(
             {name: widget.value() for name, widget in self.offsets.items()},
-            float(self.sample_time.text()),
+            BOARD_SAMPLE_TIME_US,
             [
                 self.di_name_edits[input_id].text().strip() or f"DI{input_id}"
                 for input_id in range(1, 5)
@@ -759,7 +1002,7 @@ class EmWolfPage(QWidget):
     def _load_setup(self) -> None:
         for name in CHANNEL_NAMES:
             self.offsets[name].setValue(self.project.setup.offsets[name])
-        self.sample_time.setText(str(self.project.setup.sample_time_us))
+        self.sample_time.setText(str(BOARD_SAMPLE_TIME_US))
         for input_id in range(1, 5):
             self.di_name_edits[input_id].setText(
                 self.project.setup.digital_input_name(input_id)
@@ -981,9 +1224,8 @@ class EmWolfPage(QWidget):
             return
         previous_report = self.execution_report
         try:
-            self.execution_report = EmWolfRunReport.begin(self.project)
             self.connection.send_project(self.project)
-            self.test_run_started.emit(self.execution_report.project.device.model)
+            self.scenario_tabs.setCurrentIndex(1)
         except (ValueError, OSError, ConnectionError) as exc:
             self.execution_report = previous_report
             QMessageBox.critical(self, "Send failed", str(exc))
@@ -994,12 +1236,13 @@ class EmWolfPage(QWidget):
         return root / "assets"
 
     def _export_pdf(self) -> None:
-        if not self._commit():
+        if self.execution_report is None and not self._commit():
             return
         report = self.execution_report or EmWolfRunReport.begin(self.project)
+        source = f"run {report.board_run_id}" if report.board_run_id else "configuration only"
         default_name = f"EmWolf-Test-Report-{datetime.now():%Y%m%d-%H%M%S}.pdf"
         path, _ = QFileDialog.getSaveFileName(
-            self, "Print EmWolf report to PDF", default_name, "PDF (*.pdf)"
+            self, f"Export EmWolf PDF - {source}", default_name, "PDF (*.pdf)"
         )
         if not path:
             return
@@ -1007,12 +1250,18 @@ class EmWolfPage(QWidget):
         if output.suffix.lower() != ".pdf":
             output = output.with_suffix(".pdf")
         try:
+            report = copy.deepcopy(report)
             generate_emwolf_pdf(output, report, assets_dir=self._assets_dir())
-            self._log(f"PDF report saved: {output}")
+            measured = sum(execution.trip_time_us is not None for execution in report.executions)
+            self._log(
+                f"PDF saved for {source}: {len(report.executions)} stages, {measured} confirmed results; "
+                f"{report.board_state or 'CONFIGURATION ONLY'}; {report.receipt_description}. File: {output}"
+            )
             QMessageBox.information(
                 self,
                 "PDF report",
-                f"Report saved successfully:\n{output}",
+                f"Report saved for {source}.\n{report.receipt_description}\n"
+                f"{len(report.executions)} stages; {measured} confirmed results.\n{output}",
             )
         except Exception as exc:
             # ReportLab can raise several document/image exceptions. Keep a
@@ -1029,7 +1278,7 @@ class EmWolfPage(QWidget):
             return
         try:
             save_project(Path(path), self.project)
-            self._log(f"Saved {path}")
+            self._connection_log(f"Saved {path}")
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Save failed", str(exc))
 
@@ -1044,12 +1293,14 @@ class EmWolfPage(QWidget):
             project.validate()
             self.project = project
             self._device_model_is_manual = False
-            self.execution_report = None
+            if self.execution_report is None or not self.execution_report.board_run_id:
+                self.execution_report = None
             self.current_index = None
             self._refresh_device_info_banner()
             self._load_setup()
             self._refresh_scenarios(0)
-            self._log(f"Loaded {path}")
+            self._refresh_report_preview()
+            self._connection_log(f"Loaded {path}")
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
             QMessageBox.critical(self, "Load failed", str(exc))
 

@@ -14,8 +14,8 @@ are cached outside the repository and are never published with DEVolf.
 
 Build
 -----
-.\build.ps1 -Architecture x64
-.\build.ps1 -Architecture x86
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -Architecture x64
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -Architecture x86
 
 Outputs: Dist/DEVolf-x64.exe and Dist/DEVolf-x86.exe.
 A running output is preserved; the build prints an alternate file name.
@@ -52,3 +52,12 @@ can be used automatically when the x86 environment does not exist.
 Generated build/ and output/ folders may be deleted after a build. Keep
 sessions/, scenario JSON files, assets, tests and the external toolchain cache.
 32/64 signal samples per cycle is independent of the EXE architecture.
+
+EmWolf release contents
+-----------------------
+The regular Dist/DEVolf-<architecture>.exe includes EmWolf independent runs,
+Receive results, Save results JSON, Open results folder and PDF reporting.
+No separate TCP-test executable is required. The matching autonomous EmWolf
+board build must already be deployed separately through the board toolchain.
+This Windows build never deploys to or starts the physical board.
+See docs/EMWOLF_AUTONOMOUS.md for storage, full receipt and recovery limits.

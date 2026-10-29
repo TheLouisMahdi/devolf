@@ -253,6 +253,15 @@ class MainWindow(QMainWindow):
             | QDockWidget.DockWidgetFeature.DockWidgetMovable
             | QDockWidget.DockWidgetFeature.DockWidgetFloatable
         )
+        emwolf_log_content = QWidget()
+        emwolf_log_layout = QVBoxLayout(emwolf_log_content)
+        emwolf_log_layout.setContentsMargins(4, 4, 4, 4)
+        emwolf_log_tools = QHBoxLayout()
+        emwolf_log_tools.addStretch()
+        self.emwolf_clear_log_button = QPushButton("Clear log")
+        self.emwolf_clear_log_button.setToolTip("Clear both log views; recorded results and PDF data are kept")
+        emwolf_log_tools.addWidget(self.emwolf_clear_log_button)
+        emwolf_log_layout.addLayout(emwolf_log_tools)
         self.emwolf_log_view = QPlainTextEdit()
         self.emwolf_log_view.setReadOnly(True)
         self.emwolf_log_view.setMaximumBlockCount(1000)
@@ -263,7 +272,8 @@ class MainWindow(QMainWindow):
         self.emwolf_log_view.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAsNeeded
         )
-        self.emwolf_log_dock.setWidget(self.emwolf_log_view)
+        emwolf_log_layout.addWidget(self.emwolf_log_view)
+        self.emwolf_log_dock.setWidget(emwolf_log_content)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.emwolf_log_dock)
         self.emwolf_log_dock.hide()
 
@@ -423,6 +433,8 @@ class MainWindow(QMainWindow):
         self.tabs.currentChanged.connect(self._update_device_operations_visibility)
         self._update_device_operations_visibility(self.tabs.currentIndex())
         self.emwolf_page.log_line.connect(self.emwolf_log_view.appendPlainText)
+        self.emwolf_page.log_cleared.connect(self.emwolf_log_view.clear)
+        self.emwolf_clear_log_button.clicked.connect(self.emwolf_page.clear_log)
         self.emwolf_page.test_run_started.connect(self.fc22_tester_page.on_emwolf_run_started)
         self.emwolf_page.test_result.connect(self.fc22_tester_page.on_emwolf_result)
         self.emwolf_page.board_state_changed.connect(self.fc22_tester_page.set_emwolf_board_state)

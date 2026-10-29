@@ -503,7 +503,7 @@ without overwhelming the setup/build guide.
 | `code/wolfeye/services/beacheye.py` | Loads the native DLL through `ctypes` and exposes device-info, measurement, event, signal, frame, and settings encode/decode operations to Python. |
 | `code/wolfeye/services/native_config.py` | Converts between the normalized UI configuration and the company native settings JSON without synthesizing additional native fields. |
 | `code/wolfeye/services/signal_analysis.py` | Calculates fitted phasors, RMS values, frequency, harmonics, symmetrical sequences, power quality, directional quantities, and protection indications. |
-| `code/wolfeye/services/emwolf_protocol.py` | Defines EmWolf projects, setups, scenarios, analog outputs, EWS2 frame encoding/decoding, CRC, debouncing, SSH startup, and TCP connection handling. |
+| `code/wolfeye/services/emwolf_protocol.py` | Defines EmWolf projects, setups, scenarios, analog outputs, EWS2 frame encoding/decoding, CRC, debouncing, and TCP connection handling for a manually started board process. |
 | `code/wolfeye/services/emwolf_report.py` | Collects EmWolf execution results and generates branded PDF test reports. |
 | `code/wolfeye/services/fc22_session.py` | Persists each FC22 inspection session atomically and restores its form/test values. |
 | `code/wolfeye/services/fc22_autofill.py` | Maps actual DeviceService snapshots to 22 numeric and 3 boolean checklist fields using the company point names. Records observed values independently from acceptance verdicts. |
