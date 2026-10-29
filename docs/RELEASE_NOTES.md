@@ -1,5 +1,23 @@
 # Release-ready branch
 
+## DEVolf 0.3 — EmWolf SSH controls and compact preview (2026-10-29)
+
+- Add independent Start EmWolf and Stop EmWolf controls between Port and Connect.
+  Start uses the Windows OpenSSH client to run `/home/FC22/EmWolf` as root on
+  the selected Host; Stop sends terminal Ctrl+C in that session. Stop test retains
+  its separate role. Existing EmWolf processes are detected before startup.
+- Remove the explanatory Run log and Report preview text while preserving the
+  result table and PDF data. Move file actions to a second connection row and
+  verify the layout at 1366 x 768.
+- Include autonomous EmWolf runs and stored result retrieval, Python ports of
+  WolfEye algorithms, and x64/x86 build support added since 0.2. This release
+  supplies the latest existing Windows x64 build.
+- Validation: 226 of 229 tests passed. The three logging-format test failures
+  also reproduce before the SSH/UI changes. All 63 focused EmWolf, tester and
+  responsive-layout checks passed; packaged startup passed. SSH login and Ctrl+C
+  were checked using a harmless shell loop on the board; the existing running
+  EmWolf process was preserved and duplicate startup was refused.
+
 ## Build updates and repository cleanup (2026-10-21)
 
 - Add independent `-UpdateWolfEye` and `-UpdateBeachEye` switches to full and

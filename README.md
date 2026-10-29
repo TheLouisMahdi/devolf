@@ -298,10 +298,21 @@ and device connections retain their existing responsibilities.
 FC22 Tester shares the **existing EmWolfConnection and EWS2 protocol** with the
 EmWolf tab. Its Setup page can connect/disconnect the board, run the current
 EmWolf project and open the scenario editor. Both tabs show the same connection
-state and endpoint. Start EmWolf manually in the board terminal before Connect;
+state and endpoint. In the EmWolf tab, **Start EmWolf** (between Port and Connect)
+uses the Windows OpenSSH client to log in as `root` on Host (default
+`192.168.137.1`) and execute `cd /home/FC22 && ./EmWolf`. SSH uses its normal
+user configuration/keys and port 22; the GUI Port field remains the EWS2 port.
+Key-based/passwordless SSH login must already work; authentication and startup
+errors appear in Run log. **Stop EmWolf** sends Ctrl+C in the SSH session
+started by DEVolf and waits for it to exit. Start is disabled while that session
+is active. Startup also checks for an existing EmWolf on the board to avoid
+launching another copy. A manually started EmWolf remains controlled by its
+original terminal.
 Connect opens only TCP. Disconnect closes TCP while an accepted autonomous
-run continues; use Stop test to stop outputs. Use Ctrl+C in the board terminal
-to exit EmWolf. Connecting
+run continues; use **Stop test** to stop test outputs without exiting EmWolf.
+Closing DEVolf releases the SSH session without sending Ctrl+C; continued board
+execution on session loss depends on the installed firmware's hangup handling.
+Connecting
 the test board and reading the FC22 DUT remain the existing separate EmWolf and
 DeviceService responsibilities.
 

@@ -60,6 +60,7 @@ from wolfeye.services.emwolf_protocol import (
     save_project,
 )
 from wolfeye.services.emwolf_run import STATE_NAMES, TERMINAL
+from wolfeye.services.emwolf_process import EmWolfProcess
 from wolfeye.services.emwolf_report import EmWolfRunReport, generate_emwolf_pdf
 from wolfeye.services.fc22_input_adapters import emwolf_scenario_values
 
@@ -171,6 +172,13 @@ class EmWolfPage(QWidget):
         )
         self._apply_visual_style()
         self._build_ui()
+        self.emwolf_process = EmWolfProcess(self)
+        self.emwolf_process.log.connect(self._log)
+        self.emwolf_process.state_changed.connect(self._set_emwolf_process_state)
+        self.start_emwolf_button.clicked.connect(
+            lambda: self.emwolf_process.start(self.host.text())
+        )
+        self.stop_emwolf_button.clicked.connect(self.emwolf_process.stop)
         self.bridge.log.connect(self._connection_log)
         self.bridge.state.connect(self._set_connection_state)
         self.bridge.result.connect(self._show_result)
@@ -283,11 +291,14 @@ class EmWolfPage(QWidget):
         self.root_layout = root
 
         connection_box = QGroupBox("Connection")
-        connection_row = QHBoxLayout(connection_box)
-        connection_row.setContentsMargins(8, 10, 8, 6)
+        connection_layout = QVBoxLayout(connection_box)
+        connection_layout.setContentsMargins(8, 10, 8, 6)
+        connection_layout.setSpacing(4)
+        connection_row = QHBoxLayout()
         connection_row.setSpacing(7)
+        connection_layout.addLayout(connection_row)
         self.connection_box = connection_box
-        self.connection_row = connection_row
+        self.connection_row = connection_layout
         self.host = QLineEdit(DEFAULT_HOST)
         self.host.setMinimumWidth(125)
         self.host.setMaximumWidth(180)
@@ -299,6 +310,11 @@ class EmWolfPage(QWidget):
         self.port.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.port.setFixedWidth(78)
         self.connect_button = QPushButton("Connect")
+        self.start_emwolf_button = QPushButton("Start EmWolf")
+        self.start_emwolf_button.setToolTip("Start /home/FC22/EmWolf as root over SSH on Host")
+        self.stop_emwolf_button = QPushButton("Stop EmWolf")
+        self.stop_emwolf_button.setToolTip("Send Ctrl+C to EmWolf in the SSH session started here")
+        self.stop_emwolf_button.setEnabled(False)
         self.send_button = QPushButton("Upload and run once")
         self.send_button.setEnabled(False)
         self.send_button.setToolTip("Upload all stages once; Ethernet loss does not stop the accepted run")
@@ -320,14 +336,20 @@ class EmWolfPage(QWidget):
         connection_row.addWidget(self.host)
         connection_row.addWidget(QLabel("Port"))
         connection_row.addWidget(self.port)
+        connection_row.addWidget(self.start_emwolf_button)
+        connection_row.addWidget(self.stop_emwolf_button)
         connection_row.addWidget(self.connect_button)
         connection_row.addWidget(self.send_button)
         connection_row.addWidget(self.stop_button)
-        connection_row.addWidget(self.state_label)
         connection_row.addStretch()
-        connection_row.addWidget(self.pdf_button)
-        connection_row.addWidget(self.save_button)
-        connection_row.addWidget(self.load_button)
+        file_row = QHBoxLayout()
+        file_row.setSpacing(7)
+        file_row.addWidget(self.state_label)
+        file_row.addStretch()
+        file_row.addWidget(self.pdf_button)
+        file_row.addWidget(self.save_button)
+        file_row.addWidget(self.load_button)
+        connection_layout.addLayout(file_row)
         root.addWidget(connection_box)
 
         device_box = QGroupBox("Device Under Test")
@@ -469,15 +491,6 @@ class EmWolfPage(QWidget):
         preview = QWidget()
         preview_layout = QVBoxLayout(preview)
         preview_layout.setContentsMargins(6, 6, 6, 6)
-        self.report_label = QLabel()
-        self.report_label.setWordWrap(True)
-        preview_layout.addWidget(self.report_label)
-        report_contents = QLabel(
-            "PDF includes the original run settings, device identity, stage status and "
-            "confirmed trip/close times shown below. Later editor changes do not alter that run."
-        )
-        report_contents.setWordWrap(True)
-        preview_layout.addWidget(report_contents)
         self.report_table = QTableWidget(0, 4)
         self.report_table.setHorizontalHeaderLabels(["Stage", "Result / status", "Input", "Time (ms)"])
         self.report_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -488,9 +501,6 @@ class EmWolfPage(QWidget):
         for column in range(1, 4):
             report_header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         preview_layout.addWidget(self.report_table, 1)
-        timing_note = QLabel("Time = fault output LOAD to DI edge, measured by the board; network delay is excluded.")
-        timing_note.setWordWrap(True)
-        preview_layout.addWidget(timing_note)
         left.addTab(scenario_list, "Scenarios")
         left.addTab(preview, "Report preview")
 
@@ -630,9 +640,6 @@ class EmWolfPage(QWidget):
         self.log_box = log_box
         self.log_layout = log_layout
         log_tools = QHBoxLayout()
-        log_hint = QLabel("Input edges are history; TRIP / CLOSE / RECLOSE entries are confirmed results.")
-        log_hint.setWordWrap(True)
-        log_tools.addWidget(log_hint)
         log_tools.addStretch()
         self.open_log_button = QPushButton("Open log window")
         self.open_log_button.clicked.connect(self.log_window_requested)
@@ -680,19 +687,17 @@ class EmWolfPage(QWidget):
         else:
             self.connection.connect(self.host.text().strip(), self.port.value())
 
+    def _set_emwolf_process_state(self, state: str) -> None:
+        self.start_emwolf_button.setEnabled(state == "stopped")
+        self.stop_emwolf_button.setEnabled(state == "running")
+        self.start_emwolf_button.setText("Starting..." if state == "starting" else "Start EmWolf")
+        self.stop_emwolf_button.setText("Stopping..." if state == "stopping" else "Stop EmWolf")
+
     def _refresh_report_preview(self, scenario_index: int | None = None) -> None:
         report = self.execution_report
         if report is None:
-            self.report_label.setText(
-                "No measured run yet. Export PDF will contain the current scenario settings only. "
-                "Connect to receive results automatically, or upload a new run once."
-            )
             self.report_table.setRowCount(0)
             return
-        self.report_label.setText(
-            f"Run {report.board_run_id or '-'} | {report.project.device.model or 'Unknown device'} "
-            f"| {report.board_state or 'CONFIGURATION'}\n{report.receipt_description}"
-        )
         self.report_table.setRowCount(len(report.executions))
         rows = range(len(report.executions)) if scenario_index is None else (scenario_index,)
         for row in rows:
@@ -1305,4 +1310,5 @@ class EmWolfPage(QWidget):
             QMessageBox.critical(self, "Load failed", str(exc))
 
     def shutdown(self) -> None:
+        self.emwolf_process.shutdown()
         self.connection.disconnect()
